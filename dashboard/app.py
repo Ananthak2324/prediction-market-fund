@@ -934,6 +934,10 @@ with tab4:
 
                 open_rows.append({
                     "Game":             t["game"],
+                    "Game Date":        (datetime.fromisoformat(t["start_utc"].replace("Z","+00:00"))
+                                         .astimezone(ET).strftime("%b %-d")
+                                         if t.get("start_utc") else "—"),
+                    "Game Start":       fmt_game_time(t["start_utc"]) if t.get("start_utc") else "—",
                     "Signal":           t["signal"],
                     "Shares":           t["shares"],
                     "Entry":            f"${ep:.3f}",
