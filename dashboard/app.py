@@ -481,12 +481,6 @@ with tab2:
         def _short_id(tid):
             return str(tid)[-8:] if pd.notna(tid) else "—"
 
-        def _fmt_date(s):
-            try:
-                return datetime.strptime(str(s)[:10], "%Y-%m-%d").strftime("%b %-d")
-            except Exception:
-                return str(s)[:10] if s else "—"
-
         agent_col      = df["agent_verdict"]      if "agent_verdict"      in df.columns else pd.Series(["—"] * len(df), index=df.index)
         confidence_col = df["agent_confidence"]   if "agent_confidence"   in df.columns else pd.Series(["—"] * len(df), index=df.index)
 
@@ -497,18 +491,11 @@ with tab2:
             except Exception:
                 return "—"
 
-        def _fmt_snap_date(snap_str):
-            try:
-                dt = datetime.strptime(str(snap_str), "%Y-%m-%d_%H%M").replace(tzinfo=timezone.utc)
-                return dt.astimezone(ET).strftime("%b %-d")
-            except Exception:
-                return _fmt_date(str(snap_str)[:10])
-
         display = pd.DataFrame({
             "ID":         df["trade_id"].apply(_short_id),
             "Game Date":  df["start_utc"].apply(_fmt_game_date) if "start_utc" in df.columns else "—",
             "Game Start": df["start_utc"].apply(fmt_game_time) if "start_utc" in df.columns else "—",
-            "Snap Date":  df["snapshot_time"].apply(_fmt_snap_date),
+            "Captured":   df["snapshot_time"].apply(fmt_snap_time),
             "Game":       df["game"],
             "Signal":     df.apply(
                               lambda r: f"YES · {r['team']}" if r.get("signal") == "BUY_YES"
