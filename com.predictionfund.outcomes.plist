@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.predictionfund.outcomes</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
+    <string>/Users/ananthan/Desktop/Prediction Market Fund/scripts/update_outcomes.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund</string>
+
+  <!-- Run at 2:00 AM every night -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/outcomes_out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/outcomes_err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+</dict>
+</plist>

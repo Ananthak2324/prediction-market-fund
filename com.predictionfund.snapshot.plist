@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.predictionfund.snapshot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
+    <string>/Users/ananthan/Desktop/Prediction Market Fund/scripts/schedule_snapshots.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund</string>
+
+  <!-- Run every 10 minutes -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <!-- Start automatically when you log in -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart automatically if it crashes -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <!-- Log stdout and stderr -->
+  <key>StandardOutPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/launchd_out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/launchd_err.log</string>
+
+  <!-- Load environment variables -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+</dict>
+</plist>

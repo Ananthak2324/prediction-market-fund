@@ -1,0 +1,70 @@
+{
+  "total_logged": 14,
+  "total_resolved": 5,
+  "total_valid": 5,
+  "total_valid_wins": 3,
+  "total_excluded": 0,
+  "total_open": 9,
+  "primary_metric": "clean_trades",
+  "clean_trades": {
+    "resolved": 4,
+    "wins": 2,
+    "losses": 2,
+    "win_rate": 0.5,
+    "open": 0,
+    "p_value": null
+  },
+  "suspect_trades": {
+    "resolved": 1,
+    "wins": 1,
+    "losses": 0,
+    "win_rate": 1.0,
+    "open": 9,
+    "p_value": null
+  },
+  "win_rate_overall": 0.6,
+  "win_rate_tier1": 0.5,
+  "win_rate_tier2": 0.6667,
+  "avg_gap_winners": 0.1306,
+  "avg_gap_losers": 0.132,
+  "p_value": 0.5,
+  "by_gap_bucket": {
+    "5_7": {
+      "trades": 1,
+      "win_rate": 1.0
+    },
+    "15_plus": {
+      "trades": 2,
+      "win_rate": 0.5
+    },
+    "7_10": {
+      "trades": 1,
+      "win_rate": 1.0
+    },
+    "10_15": {
+      "trades": 1,
+      "win_rate": 0.0
+    }
+  },
+  "by_book": {
+    "pinnacle": {
+      "trades": 5,
+      "win_rate": 0.6
+    }
+  },
+  "excluded_trades": [],
+  "last_updated": "2026-06-24T03:43:52.436044+00:00",
+  "agent_stats": {
+    "total_evaluated": 0,
+    "trade_recommendations": 0,
+    "monitor_recommendations": 0,
+    "skip_recommendations": 0,
+    "skip_rate": null,
+    "win_rate_after_agent": null,
+    "win_rate_without_agent": 0.6,
+    "news_found_rate": null,
+    "pinnacle_unstable_rate": null,
+    "high_confidence_win_rate": null,
+    "medium_confidence_win_rate": null
+  }
+}

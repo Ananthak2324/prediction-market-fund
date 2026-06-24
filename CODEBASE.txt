@@ -1,0 +1,1215 @@
+================================================================================
+  EDGEFUND — PREDICTION MARKET ALPHA SYSTEM
+  Complete Codebase Reference for New Engineers
+================================================================================
+
+Last updated: June 24, 2026
+Author: Ananthan K.
+Status: Phase 1 live (paper trading). Phase 2 not yet started.
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1.  What This Project Does
+2.  Project Goal & Timeline
+3.  Tech Stack
+4.  Environment Setup (start here)
+5.  .env File — What You Need to Create
+6.  Directory & File Map
+7.  Data Flow — How Everything Connects
+8.  File-by-File Breakdown (Written Files)
+9.  File-by-File Breakdown (Stub/Unwritten Files)
+10. Data Files — Schema Reference
+11. Automation — LaunchAgents (macOS)
+12. APIs — Keys, Endpoints, Cost
+13. Research Agent — Architecture Deep Dive
+14. Dashboard — How to Run
+15. Current Performance State
+16. What Phase 2 Needs to Build
+17. Known Issues & Edge Cases
+18. Git / What Is and Isn't Committed
+
+================================================================================
+1. WHAT THIS PROJECT DOES
+================================================================================
+
+EdgeFund is a paper-trading system that exploits pricing gaps between:
+  - Kalshi prediction markets  (retail-driven prices, behavioral biases)
+  - Pinnacle sportsbook         (sharp market, vig-free implied probabilities)
+
+The thesis: Kalshi retail bettors systematically misprice game contracts
+relative to Pinnacle's sharp consensus. When the gap between Kalshi's
+probability and Pinnacle's vig-free probability exceeds a threshold,
+we paper-trade the discrepancy and log outcomes to build a statistical
+track record.
+
+Example:
+  Marlins win probability
+    Kalshi: 49%
+    Pinnacle (vig-free): 61%
+    Gap: -12.2% (Kalshi is underpricing the home team)
+  → Signal: BUY_YES on KXMLBGAME-26JUN241210TEXMIA-MIA at Kalshi
+
+The system is NOT live trading real money. It is building a statistical
+track record to demonstrate edge before applying for YC (deadline July 27, 2026)
+and eventually deploying capital.
+
+================================================================================
+2. PROJECT GOAL & TIMELINE
+================================================================================
+
+Target: 30+ clean resolved Tier 1 trades with win rate >= 58% and p < 0.05
+
+Current state (as of June 24, 2026):
+  - 14 trades logged
+  - 5 resolved (3W / 2L, 60% win rate)
+  - 4 clean Tier 1 resolved (2W / 2L, 50%)
+  - 9 open positions (mostly timing-suspect early snapshots)
+  - p-value: 0.50 (need many more trades)
+
+Key deadlines:
+  - July 21, 2026: TheOddsAPI business plan expires (need to renew or find alternative)
+  - July 27, 2026: YC application deadline
+
+The strategy for the YC application:
+  - Paper trade every day throughout July
+  - Show 30+ clean resolved trades with statistical significance
+  - Dashboard serves as the demo for the YC application itself
+
+================================================================================
+3. TECH STACK
+================================================================================
+
+Language:         Python 3.13
+Package manager:  Miniconda (conda)
+                  Python path: /opt/homebrew/Caskroom/miniconda/base/bin/python3
+
+Core libraries:
+  pandas >= 2.0     — DataFrames for all data manipulation
+  numpy             — numerical ops
+  scipy             — stats (binomtest for p-value calculation)
+  requests          — all HTTP calls (Kalshi API, TheOddsAPI, Anthropic)
+  python-dotenv     — .env file loading
+  loguru            — structured logging
+
+Dashboard:
+  streamlit == 1.58.0        — dashboard framework
+  streamlit-autorefresh      — 60-second auto-refresh
+  plotly == 6.8.0            — interactive charts
+
+AI Agent:
+  anthropic == 0.111.0       — Anthropic Python SDK
+  Model: claude-sonnet-4-6   — used for web search + analysis
+
+Testing:
+  pytest            — test runner
+
+Visualization (legacy, pre-dashboard):
+  matplotlib        — static charts (no longer used in main app)
+  seaborn           — styling (no longer used in main app)
+
+Automation (macOS only):
+  launchd / LaunchAgents     — replaces cron on macOS
+  Two .plist files in project root control the two automated scripts
+
+--------------------------------------------------------------------------------
+INSTALLATION
+--------------------------------------------------------------------------------
+
+# 1. Clone the repo
+git clone <repo-url>
+cd "Prediction Market Fund"
+
+# 2. Install conda if not present (macOS)
+brew install --cask miniconda
+
+# 3. Create the environment (or use base)
+conda create -n edgefund python=3.13
+conda activate edgefund
+
+# 4. Install Python dependencies
+pip install -r requirements.txt
+
+# 5. Install dashboard extras (not in requirements.txt yet)
+pip install streamlit streamlit-autorefresh plotly
+
+# 6. Install Anthropic SDK
+pip install anthropic
+
+# 7. Create your .env file (see Section 5)
+
+# 8. Load the LaunchAgents (macOS — see Section 11)
+
+NOTE: On a non-Mac system the LaunchAgents won't work.
+On Linux, convert the plist files to systemd services or cron jobs.
+The scripts themselves are pure Python and work on any platform.
+
+================================================================================
+4. ENVIRONMENT SETUP (START HERE)
+================================================================================
+
+The project root must be your working directory when running any script.
+Every script uses:
+  sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+to add the project root to the Python path, so module imports work.
+
+Always run scripts from the project root:
+  cd "/path/to/Prediction Market Fund"
+  python scripts/update_outcomes.py
+
+NOT from inside the scripts/ directory.
+
+================================================================================
+5. .env FILE — WHAT YOU NEED TO CREATE
+================================================================================
+
+Create a file named exactly ".env" in the project root (same level as
+requirements.txt). This file is NEVER committed to git (.gitignore covers it).
+
+Contents:
+
+  ODDS_API_KEY=your_theoddsapi_key_here
+  ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+  # Optional overrides (defaults shown):
+  KALSHI_API_BASE=https://api.elections.kalshi.com/trade-api/v2
+  ODDS_API_BASE=https://api.theoddsapi.com
+
+WHERE TO GET KEYS:
+  ODDS_API_KEY:
+    - Sign up at https://the-odds-api.com
+    - Free plan: 500 requests/month (not enough for production)
+    - Business plan: needed for historical data pulls
+    - The project owner's key expires July 21, 2026 — coordinate before then
+
+  ANTHROPIC_API_KEY:
+    - Sign up at https://console.anthropic.com
+    - The research agent uses claude-sonnet-4-6
+    - Cost: ~$0.013 per trade evaluation (with prompt caching)
+    - Monthly cost estimate: $5-15 depending on trade volume
+    - If you don't have a key, the agent defaults to MONITOR and never blocks trades
+
+KALSHI API:
+    - No API key required for public market data
+    - The Kalshi base URL is hardcoded as default — no key needed
+
+================================================================================
+6. DIRECTORY & FILE MAP
+================================================================================
+
+Prediction Market Fund/
+│
+├── .env                          ← NOT in git. Create this yourself (see §5)
+├── .gitignore                    ← Covers .env, __pycache__, raw data
+├── .streamlit/
+│   └── config.toml               ← Dark theme for Streamlit dashboard
+├── requirements.txt              ← pip dependencies
+├── CODEBASE.txt                  ← This file
+│
+├── com.predictionfund.snapshot.plist   ← LaunchAgent: runs schedule_snapshots.py
+├── com.predictionfund.outcomes.plist   ← LaunchAgent: runs update_outcomes.py
+│
+├── agent/                        ← AI research agent
+│   ├── __init__.py               ← empty
+│   ├── research_agent.py         ← WRITTEN — main agent (513 lines)
+│   ├── decision_engine.py        ← STUB — Phase 2
+│   └── signal_framework.py       ← STUB — Phase 2
+│
+├── analysis/                     ← Gap analysis and backtesting
+│   ├── __init__.py               ← empty
+│   ├── backtest.py               ← PARTIAL — backtest scaffolding
+│   ├── gap_calculator.py         ← PARTIAL — gap computation helpers
+│   ├── merger.py                 ← PARTIAL — joins Kalshi + Vegas data
+│   └── normalizer.py             ← WRITTEN — team name normalization
+│
+├── config/
+│   └── config.py                 ← WRITTEN — env var loading + constants
+│
+├── core/                         ← Shared utilities
+│   ├── __init__.py               ← empty
+│   ├── db.py                     ← STUB — Phase 2 (SQLAlchemy ORM)
+│   ├── logger.py                 ← WRITTEN — loguru setup
+│   └── utils.py                  ← WRITTEN — vig removal, prob conversion
+│
+├── dashboard/
+│   ├── __init__.py               ← empty
+│   ├── app.py                    ← WRITTEN — full Streamlit dashboard (903 lines)
+│   ├── charts.py                 ← PARTIAL — legacy matplotlib charts, not used
+│   └── reporter.py               ← STUB — Phase 3
+│
+├── data/                         ← All data lives here
+│   ├── __init__.py               ← empty
+│   ├── fetcher.py                ← PARTIAL — unified data fetching
+│   ├── clients/
+│   │   ├── __init__.py           ← empty
+│   │   ├── kalshi_client.py      ← WRITTEN — Kalshi REST API client
+│   │   └── odds_client.py        ← WRITTEN — TheOddsAPI client
+│   │
+│   ├── paper_trades.json         ← LIVE DATA — main trade ledger (14 trades)
+│   ├── performance_summary.json  ← LIVE DATA — aggregated stats + p-value
+│   ├── agent_cost_log.csv        ← LIVE DATA — per-call Anthropic costs
+│   │
+│   ├── snapshots/                ← NOT committed to git
+│   │   ├── YYYY-MM-DD_HHMM.json  ← One file per snapshot run
+│   │   ├── master_log.json       ← All snapshots in one list
+│   │   ├── missed_snapshots.json ← Games whose window was missed
+│   │   ├── scheduler_log.txt     ← Timestamped log of every schedule check
+│   │   ├── launchd_out.log       ← stdout from LaunchAgent (snapshot)
+│   │   ├── launchd_err.log       ← stderr from LaunchAgent (snapshot)
+│   │   ├── outcomes_out.log      ← stdout from LaunchAgent (outcomes)
+│   │   └── outcomes_err.log      ← stderr from LaunchAgent (outcomes)
+│   │
+│   └── raw/                      ← NOT committed to git
+│       ├── vegas/mlb/            ← TheOddsAPI historical MLB pulls (~240 files)
+│       ├── vegas/nba/            ← TheOddsAPI historical NBA pulls
+│       ├── kalshi/               ← Kalshi candle + market JSON files
+│       └── *.csv                 ← Merged datasets from analysis scripts
+│
+├── scripts/                      ← Operational scripts
+│   ├── schedule_snapshots.py     ← WRITTEN — LaunchAgent script (runs q10m)
+│   ├── snapshot_gaps.py          ← WRITTEN — manual snapshot runner
+│   ├── update_outcomes.py        ← WRITTEN — nightly outcome resolution
+│   ├── fetch_odds_history.py     ← WRITTEN — historical Pinnacle data pull
+│   ├── pull_kalshi_markets.py    ← WRITTEN — fetch Kalshi market list
+│   ├── pull_kalshi_candles.py    ← WRITTEN — fetch Kalshi price history
+│   ├── backtest_gap.py           ← WRITTEN — run historical gap analysis
+│   ├── run_backtest.py           ← WRITTEN — CLI backtest runner
+│   ├── test_agent.py             ← WRITTEN — test agent on recent trades
+│   └── test_favorites_filter.py  ← WRITTEN — test favorites filter logic
+│
+└── tests/                        ← Automated tests
+    ├── __init__.py               ← empty
+    ├── test_agent_cost.py        ← WRITTEN — validates agent cost / caching
+    ├── test_merger.py            ← PARTIAL
+    ├── test_normalizer.py        ← PARTIAL
+    └── test_utils.py             ← PARTIAL
+
+================================================================================
+7. DATA FLOW — HOW EVERYTHING CONNECTS
+================================================================================
+
+Every 10 minutes (LaunchAgent):
+  schedule_snapshots.py
+    → Polls Kalshi API for upcoming MLB/NBA games
+    → For any game whose start is 110-130 min away (the 20-min window):
+         Fetches live Kalshi bid/ask prices
+         Fetches live Pinnacle moneyline from TheOddsAPI
+         Computes gap = k_prob - v_prob
+         Saves snapshot to data/snapshots/YYYY-MM-DD_HHMM.json
+         Appends to data/snapshots/master_log.json
+    → Games whose window was missed → data/snapshots/missed_snapshots.json
+
+Every 2 AM daily (LaunchAgent):
+  update_outcomes.py
+    → Reads all snapshot files from data/snapshots/
+    → For each game row flagged as tradeable (abs_gap >= 0.05):
+         If trade not yet in paper_trades.json:
+           → Calls research_agent.run() [AI BARRIER]
+                If SKIP  → writes to data/skipped_trades.json, stops
+                If TRADE or MONITOR → logs to data/paper_trades.json
+         If trade already in paper_trades.json but outcome is null:
+           → Checks if game started >0.5h ago
+           → Fetches Kalshi settled result via API
+           → Updates outcome (WIN/LOSS), correct, resolution_price, resolved_at
+    → Rebuilds data/performance_summary.json with all stats + agent_stats
+
+On demand:
+  python scripts/update_outcomes.py     ← run manually anytime
+  python scripts/snapshot_gaps.py       ← take a manual snapshot
+  python scripts/test_agent.py          ← test agent on recent trades
+  streamlit run dashboard/app.py        ← launch the dashboard
+
+AI Agent barrier (inside update_outcomes.py):
+  For EVERY new trade candidate before it's logged:
+    research_agent.run(game_dict)
+      → Check 1: Is Pinnacle line stable? (re-fetch from TheOddsAPI, compare to snapshot)
+                  If abs(current - snapshot) >= 0.03 → SKIP immediately
+      → Check 2: Web search for breaking news
+                  One query: "{home} {away} starting pitcher lineup injury scratch {date}"
+                  Claude claude-sonnet-4-6 + web_search_20250305 beta
+      → Check 3: Synthesize verdict as JSON
+    Returns: { recommendation, confidence, reasoning, gap_type, news_found, ... }
+    TRADE/MONITOR → trade is logged to paper_trades.json with agent fields
+    SKIP          → trade goes to skipped_trades.json only
+
+================================================================================
+8. FILE-BY-FILE BREAKDOWN (WRITTEN FILES)
+================================================================================
+
+────────────────────────────────────────
+scripts/schedule_snapshots.py
+────────────────────────────────────────
+PURPOSE: The core data collection engine. Runs every 10 minutes via LaunchAgent.
+
+WHAT IT DOES:
+  1. Calls Kalshi /markets?series_ticker=KXMLBGAME (and KXNBAGAME) to get
+     all active games with their start times and status.
+  2. For each game, calculates how many minutes until first pitch.
+  3. If the game is 110-130 minutes away (the 20-min snapshot window):
+       a. Fetches live Kalshi ask/bid prices for both YES and NO contracts
+       b. Computes mid-price (bid + ask) / 2 as k_prob
+       c. Fetches Pinnacle moneyline from TheOddsAPI for that game
+       d. Strips the vig using remove_vig() from core/utils.py
+       e. Computes gap = k_prob - v_prob
+       f. Flags if abs_gap > threshold
+       g. Saves the full snapshot to data/snapshots/YYYY-MM-DD_HHMM.json
+  4. If a game's window passed without being captured → logs to missed_snapshots.json
+  5. Writes status to scheduler_log.txt every run
+
+WHY 2 HOURS: The 2-hour pre-game window is when:
+  - Starting lineups are confirmed but still adjustable
+  - Sharp money has moved in but retail hasn't fully caught up
+  - Enough time remains for the gap not to disappear immediately
+
+KEY FUNCTION: get_well_captured_tickers()
+  - Reads existing snapshot files to avoid re-snapping games already captured
+  - BUG FIXED June 24: Was globbing *.json and hitting missed_snapshots.json (a list)
+    Fixed to glob only YYYY-MM-DD_HHMM.json pattern
+
+SNAPSHOT FILE FORMAT:
+  {
+    "snapshot_time": "2026-06-23_2338",     ← UTC, matches filename
+    "rows": [
+      {
+        "sport": "MLB",
+        "game": "Chicago Cubs @ New York Mets",
+        "team": "New York Mets",             ← the side being priced
+        "side": "HOME",
+        "start_utc": "2026-06-26T02:10:00Z",
+        "kalshi_ticker": "KXMLBGAME-...-NYM",
+        "event_ticker": "KXMLBGAME-...",
+        "k_prob": 0.505,                     ← Kalshi mid-price
+        "k_bid": 0.50,
+        "k_ask": 0.51,
+        "v_prob": 0.5087,                    ← Pinnacle vig-free prob
+        "pinnacle_price": -114,              ← American moneyline
+        "gap": -0.0037,                      ← k_prob - v_prob
+        "abs_gap": 0.0037,
+        "fav_flag": false,                   ← true if abs_gap > threshold
+        "result": null
+      }
+    ]
+  }
+
+────────────────────────────────────────
+scripts/update_outcomes.py
+────────────────────────────────────────
+PURPOSE: Nightly script that (1) ingests new trades from snapshots,
+         (2) resolves settled trades, (3) rebuilds performance_summary.json
+
+FLOW IN DETAIL:
+
+  ingest_new_trades():
+    - Reads all snapshot files
+    - Finds rows where fav_flag=True and abs_gap >= GAP_THRESHOLD (0.05)
+    - For each new game not yet in paper_trades.json:
+        If _AGENT_AVAILABLE:
+          verdict = research_agent.run(game_dict)
+          If SKIP → write to skipped_trades.json, skip logging
+          Else → attach agent fields to trade dict, log to paper_trades.json
+        Else:
+          Log trade with agent_verdict=None
+    - Returns (trades, new_count, replaced_count, skipped_count)
+
+  resolve_trades():
+    - For each trade where outcome is None and game started > RESOLVE_AFTER hours ago:
+        GET /markets/{kalshi_ticker}
+        Check settled_price → outcome = WIN if settled_price == 1.0 else LOSS
+
+  build_summary():
+    - Computes overall/tier win rates, gap bucket breakdown, p-value (binomtest)
+    - Categorizes trades as "clean" (hours_before_game <= 3) vs "suspect" (> 3)
+    - Calculates agent_stats section
+    - Saves to performance_summary.json
+
+TIMING CATEGORIES:
+  - Clean trades: snapshot taken <= 3 hours before game start
+    These are the trades that count for the statistical track record
+  - Timing-suspect: snapshot taken > 3 hours early (may have been superseded
+    by roster changes, injury news before the window)
+  - Tier 1: abs_gap >= 10% (high conviction)
+  - Tier 2: abs_gap 5–10% (moderate conviction)
+
+REPLACEMENT LOGIC:
+  If the same event_ticker shows up in a later snapshot (closer to game time),
+  the later snapshot replaces the earlier one in paper_trades.json.
+  This ensures we always have the freshest pre-game price, not an early one.
+
+────────────────────────────────────────
+agent/research_agent.py
+────────────────────────────────────────
+PURPOSE: AI barrier between gap detection and trade logging.
+         Evaluates whether a gap is safe to trade or should be skipped.
+
+ARCHITECTURE:
+  This uses Claude claude-sonnet-4-6 with the web_search_20250305 beta tool.
+  The web search runs SERVER-SIDE inside Claude — there are no client-side
+  tool_use blocks. stop_reason = "end_turn" directly after Claude searches
+  and synthesizes. The search counter in our cost log shows 0 but searches
+  DO run; cost is absorbed into the token billing.
+
+INPUT (game_dict):
+  {
+    "home_team": "Miami Marlins",
+    "away_team": "Texas Rangers",
+    "sport": "MLB",                          ← MLB or NBA
+    "side": "HOME",                          ← which side we'd trade
+    "game_time": "2026-06-24T19:10:00Z",
+    "snapshot_time": "2026-06-24T17:08:00Z",
+    "date": "2026-06-24",
+    "kalshi_prob": 0.295,
+    "pinnacle_prob": 0.55,
+    "gap": -0.255,
+    "gap_direction": "kalshi_lower",         ← or "kalshi_higher"
+    "tier": 1,                               ← 1 if abs_gap >= 0.10, else 2
+    "hours_before_game": 2.03,
+    "timing_suspect": false
+  }
+
+OUTPUT (verdict dict):
+  {
+    "recommendation": "SKIP",               ← TRADE / SKIP / MONITOR
+    "confidence": "HIGH",                   ← HIGH / MEDIUM / LOW
+    "reasoning": "...",                     ← 1-2 sentence explanation
+    "gap_explanation": "...",               ← why the gap exists
+    "gap_type": "INFORMATIONAL",            ← BEHAVIORAL or INFORMATIONAL
+    "news_found": true,
+    "news_detail": "...",                   ← what news was found
+    "news_source": "...",                   ← URL or outlet name
+    "pitcher_confirmed": true,
+    "weather_issue": false,
+    "pinnacle_stable": true,
+    "pinnacle_movement": 0.01               ← abs change since snapshot
+  }
+
+THREE CHECKS:
+  Check 1 — Pinnacle stability (before API call)
+    Re-fetches current Pinnacle line via TheOddsAPI
+    If abs(current - snapshot) >= 0.03 (3pp): auto SKIP
+    Sharp money moved = informational gap
+
+  Check 2 — Web search (inside Claude API call)
+    Single combined query per trade to minimize cost
+    Query: "{home} {away} starting pitcher lineup injury scratch {date}"
+    Claude searches and synthesizes findings
+
+  Check 3 — Verdict synthesis
+    Claude returns JSON verdict based on BEHAVIORAL vs INFORMATIONAL framework
+    Behavioral gaps → TRADE or MONITOR
+    Informational gaps → SKIP
+
+DECISION RULES (from system prompt):
+  SKIP if: pitcher scratched, key player injured, Pinnacle moved 3pp+,
+           wind 15+ mph blowing in, bullpen overused, any credible injury
+  TRADE if: roster confirmed, pitcher healthy, line stable 3h+,
+            heavily favored team (favorite-longshot bias), no injury news,
+            public narrative favors underdog
+
+COST OPTIMIZATIONS:
+  - System prompt uses cache_control=ephemeral → 90% cost reduction after run 1
+    (5-minute cache TTL; LaunchAgent reuse within same run hits cache)
+  - Single web search per trade (was 4 separate queries)
+  - Search results truncated to 1500 chars
+  - Actual cost: ~$0.010–$0.014 per trade (budget was $0.05)
+  - Cost log: data/agent_cost_log.csv
+
+FALLBACK: If Anthropic API fails (no key, network error, any exception):
+  Returns {"recommendation": "MONITOR", "_agent_error": True, ...}
+  MONITOR means the trade IS logged (conservatively). Agent failures
+  never block trade logging.
+
+────────────────────────────────────────
+dashboard/app.py
+────────────────────────────────────────
+PURPOSE: Streamlit trading terminal dashboard. Auto-refreshes every 60 seconds.
+
+RUN WITH: streamlit run dashboard/app.py
+
+TABS:
+
+  📡 Live Gaps
+    - Loads ALL snapshot files from last 24 hours
+    - Deduplicates by event_ticker, keeping most recent reading per game
+    - Filters out games that have already started (hours < 0)
+    - Sorts by abs_gap descending
+    - Shows: Game, Game Time (CT), Kalshi%, Pinnacle%, Gap, Signal,
+             Tier, Hours to Game, Action (TRADE/WATCH/—), Snapped (CT)
+    - Summary: N sides tracked, Tier 1 count, % with gap ≥ 3%, latest snap time
+
+  📋 Trade Log
+    - Reads paper_trades.json directly
+    - Filters: Sport / Outcome / Tier dropdowns
+    - Columns: ID (last 8 chars), Date, Game, Signal, Gap, Tier,
+               Kalshi%, Pinnacle%, Agent verdict, Confidence, Outcome, Hours
+    - Note shown when no trades have agent reasoning yet
+
+  📈 Performance
+    - Win Rate Over Time: 7-day rolling line chart with 14-day minimum x-axis
+    - Win Rate by Gap Bucket: bar chart (5-7%, 7-10%, 10-15%, 15%+)
+      Zero-win-rate bars shown at 2% minimum height
+    - Outcomes Donut: WIN/LOSS/OPEN/SKIPPED breakdown
+    - Agent Performance Stats: from performance_summary.json agent_stats section
+    - Insight callout: green/yellow/gray based on p-value threshold
+
+  ⚙️ System
+    - Snapshot Pipeline status: reads scheduler_log.txt mtime to detect
+      "between windows" vs truly stale. Shows next game window time.
+    - Research Agent status: agent wired vs active, cost breakdown
+    - Outcome Updater: last run time, open trade count, oldest open trade
+    - Live Conditions Gate: 9 checklist items that must all pass before
+      switching to live trading (most are manually checked flags)
+
+TIMEZONE: All times displayed in Central Time (CT = America/Chicago).
+  Snapshot filenames are UTC. The fmt_snap_time() helper converts them.
+  fmt_game_time() converts start_utc to CT for display.
+
+DATA SOURCES (all flat JSON/CSV — no database):
+  data/paper_trades.json          ← trade ledger
+  data/performance_summary.json   ← aggregated stats
+  data/agent_cost_log.csv         ← per-call costs
+  data/snapshots/                 ← snapshot files
+
+────────────────────────────────────────
+data/clients/kalshi_client.py
+────────────────────────────────────────
+PURPOSE: Thin wrapper around Kalshi's public REST API.
+
+BASE URL: https://api.elections.kalshi.com/trade-api/v2
+
+KEY METHODS:
+  get_markets(series_ticker)    ← list all active markets for a series
+  get_market(ticker)            ← get single market (for resolution)
+  get_orderbook(ticker)         ← live bid/ask for a contract
+
+No API key required. Rate limit: be polite, don't spam.
+
+Series tickers:
+  MLB: KXMLBGAME
+  NBA: KXNBAGAME
+  (NFL not yet integrated)
+
+────────────────────────────────────────
+data/clients/odds_client.py
+────────────────────────────────────────
+PURPOSE: Wrapper around TheOddsAPI for Pinnacle lines.
+
+BASE URL: https://api.theoddsapi.com
+
+KEY METHODS:
+  get_odds(sport_key, markets, bookmakers, event_ids)
+    Returns moneyline odds for specified bookmakers
+    sport_key: "baseball_mlb", "basketball_nba"
+
+  get_historical_odds(sport_key, date, markets, bookmakers)
+    Requires Business plan. Returns odds as-of a specific date/time.
+    Used during initial backtest data collection (not in live pipeline).
+
+IMPORTANT: The agent uses TheOddsAPI directly (not this client class) to
+re-check Pinnacle stability. See research_agent._fetch_current_pinnacle().
+
+────────────────────────────────────────
+core/utils.py
+────────────────────────────────────────
+PURPOSE: Pure utility functions shared across the project.
+
+KEY FUNCTIONS:
+
+  american_to_prob(odds: int) -> float
+    Converts American moneyline to raw implied probability.
+    Positive (underdog): 100 / (odds + 100)
+    Negative (favorite): abs(odds) / (abs(odds) + 100)
+
+  remove_vig(prob_a: float, prob_b: float) -> tuple[float, float]
+    Removes the bookmaker vig from a two-outcome market.
+    Divides each raw prob by their sum.
+    e.g. (-150, +130) → raw (0.600, 0.435) → vig-free (0.579, 0.421)
+
+  This is the critical math that makes Pinnacle prices comparable to Kalshi.
+  Kalshi prices are already vig-free (market maker sets odds, fees separate).
+  Pinnacle embeds ~2-3% vig which must be removed before comparing.
+
+────────────────────────────────────────
+analysis/normalizer.py
+────────────────────────────────────────
+PURPOSE: Maps all the different name formats for the same team to a
+         canonical name. Critical when joining Kalshi data (uses long names
+         like "New York Yankees") with TheOddsAPI data (uses ESPN-style
+         names like "NY Yankees").
+
+Contains NBA_MAP and MLB_MAP dictionaries.
+normalize_team(name) looks up and returns canonical name.
+
+This is frequently incomplete — if you see merge failures, the team name
+isn't in the map. Add it here.
+
+────────────────────────────────────────
+config/config.py
+────────────────────────────────────────
+Loads environment variables and defines global constants.
+SPORTS list, API base URLs, gap thresholds, log level.
+
+────────────────────────────────────────
+tests/test_agent_cost.py
+────────────────────────────────────────
+PURPOSE: Validates the three cost optimizations on a mock game.
+Runs the agent TWICE — first run is cold cache, second is warm cache.
+Checks that cache_read_tokens grows between runs.
+Does NOT touch paper_trades.json or real snapshot data.
+
+Run with: python tests/test_agent_cost.py
+
+────────────────────────────────────────
+scripts/test_agent.py
+────────────────────────────────────────
+PURPOSE: Runs the research agent on the 3 most recently snapped paper trades.
+Prints raw agent response, parsed verdict, and what would be logged.
+
+Run with: python scripts/test_agent.py
+
+================================================================================
+9. FILE-BY-FILE BREAKDOWN (STUB / UNWRITTEN FILES)
+================================================================================
+
+These files exist as 2-line stubs:
+  raise NotImplementedError("Phase N module — not yet built")
+
+DO NOT import them in production code without implementing them first.
+
+agent/decision_engine.py  [Phase 2]
+  Planned: Rules-based trade decision logic.
+  Would handle position sizing, max daily exposure, bankroll constraints.
+  Currently the agent verdict is binary TRADE/SKIP — this would add
+  quantitative position management.
+
+agent/signal_framework.py  [Phase 2]
+  Planned: Sport-specific knowledge prompt templates.
+  Instead of one generic system prompt, this would have MLB-specific,
+  NBA-specific reasoning frameworks that Claude can be switched into.
+
+core/db.py  [Phase 2]
+  Planned: SQLAlchemy ORM migration.
+  Currently all data is flat JSON. Once trades exceed ~500 the JSON
+  read/write pattern becomes slow. This would migrate paper_trades.json
+  to a SQLite database with proper schema.
+  Tables planned: TradeLog, GapRecord, AnalysisResult
+
+dashboard/reporter.py  [Phase 3]
+  Planned: Daily email/Slack summary of overnight performance.
+  Would send morning report: new trades logged, outcomes resolved,
+  current win rate, p-value update.
+
+ALSO NOT BUILT (no file exists yet):
+  trading/                        ← Live trading module
+    live_trader.py                ← Would actually place Kalshi orders
+    position_manager.py           ← Track open positions, P&L
+    LIVE_MODE gate                ← Boolean flag to switch from paper to live
+
+================================================================================
+10. DATA FILES — SCHEMA REFERENCE
+================================================================================
+
+────────────────────────────────────────
+data/paper_trades.json
+────────────────────────────────────────
+A JSON array of trade objects. One object per logged trade.
+Currently 14 trades (as of June 24, 2026).
+
+SCHEMA:
+{
+  "trade_id":          "2026-06-23_0048|KXMLBGAME-...",  ← snapshot_time|event_ticker
+  "snapshot_time":     "2026-06-23_0048",                ← UTC, filename format
+  "snapshot_file":     "2026-06-23_0048.json",
+  "sport":             "MLB",
+  "game":              "Texas Rangers @ Miami Marlins",   ← away @ home
+  "team":              "Miami Marlins",                   ← side being traded
+  "side":              "HOME",
+  "start_utc":         "2026-06-24T19:10:00Z",
+  "kalshi_ticker":     "KXMLBGAME-26JUN241210TEXMIA-MIA",
+  "event_ticker":      "KXMLBGAME-26JUN241210TEXMIA",
+  "k_prob":            0.49,
+  "v_prob":            0.6102,
+  "gap":               -0.1202,                          ← k_prob - v_prob
+  "abs_gap":           0.1202,
+  "signal":            "BUY_YES",                        ← BUY_YES or BUY_NO
+  "book":              "pinnacle",
+  "outcome":           null,                             ← WIN / LOSS / null (open)
+  "correct":           null,                             ← true/false after resolution
+  "resolution_price":  null,                             ← 1.0 = YES won, 0.0 = NO won
+  "resolved_at":       null,
+  "hours_before_game": 42.37,
+  "timing_suspect":    true,                             ← true if > 3h before game
+  "valid_for_analysis":true,
+  "replacement_flags": [],
+  "agent_verdict":     null,                             ← TRADE/SKIP/MONITOR (null = pre-agent)
+  "agent_confidence":  null,                             ← HIGH/MEDIUM/LOW
+  "agent_reasoning":   null,
+  "gap_explanation":   null,
+  "gap_type":          null,                             ← BEHAVIORAL/INFORMATIONAL
+  "news_found":        null,
+  "news_detail":       null,
+  "news_source":       null,
+  "pitcher_confirmed": null,
+  "weather_issue":     null,
+  "pinnacle_stable":   null,
+  "pinnacle_movement": null
+}
+
+NOTES:
+- All 14 current trades have agent_verdict=null because they were logged
+  BEFORE the agent was wired in. From June 24 forward, all new trades
+  will have agent fields populated.
+- signal=BUY_YES means k_prob < v_prob (Kalshi underpricing, buy YES cheap)
+- signal=BUY_NO means k_prob > v_prob (Kalshi overpricing, buy NO)
+- SKIPPED trades go to data/skipped_trades.json, not here
+
+────────────────────────────────────────
+data/performance_summary.json
+────────────────────────────────────────
+Regenerated on every run of update_outcomes.py.
+DO NOT edit manually — it will be overwritten.
+
+TOP-LEVEL FIELDS:
+  total_logged:      14
+  total_resolved:    5
+  total_valid:       5
+  total_valid_wins:  3
+  total_open:        9
+  primary_metric:    "clean_trades"     ← what we use for YC stat
+  win_rate_overall:  0.6                ← 3W/2L all resolved
+  win_rate_tier1:    0.5                ← 2W/2L Tier 1 (abs_gap >= 10%)
+  win_rate_tier2:    0.6667             ← 2W/1L Tier 2 (abs_gap 5–10%)
+  avg_gap_winners:   0.1306
+  avg_gap_losers:    0.1320
+  p_value:           0.5                ← binomtest, needs ~30 trades for < 0.05
+
+CLEAN_TRADES (≤3h window):
+  resolved:  4
+  wins:      2
+  losses:    2
+  win_rate:  0.5
+  open:      0
+  p_value:   null
+
+SUSPECT_TRADES (>3h window):
+  resolved:  1
+  wins:      1
+  losses:    0
+  win_rate:  1.0
+  open:      9
+
+BY_GAP_BUCKET:
+  "5_7":   { trades: 1, win_rate: 1.0 }
+  "7_10":  { trades: 1, win_rate: 1.0 }
+  "10_15": { trades: 1, win_rate: 0.0 }
+  "15_plus": { trades: 2, win_rate: 0.5 }
+
+AGENT_STATS (all null/zero until post-June 24 trades resolve):
+  total_evaluated, trade_recommendations, skip_recommendations,
+  skip_rate, win_rate_after_agent, win_rate_without_agent (0.6 = baseline),
+  news_found_rate, pinnacle_unstable_rate,
+  high_confidence_win_rate, medium_confidence_win_rate
+
+────────────────────────────────────────
+data/agent_cost_log.csv
+────────────────────────────────────────
+Appended on every research_agent.run() call.
+
+COLUMNS:
+  timestamp, game, input_tokens, output_tokens, cache_read_tokens,
+  search_calls, estimated_cost_usd
+
+COST BREAKDOWN (Sonnet 4.6 pricing per million tokens):
+  Input:       $3.00/M
+  Cache read:  $0.30/M   ← 10x cheaper than input
+  Output:      $15.00/M
+  Web search:  $0.01/search (NOT separately billed — absorbed into tokens)
+               The counter shows 0 because web_search_20250305 is server-side.
+
+────────────────────────────────────────
+data/skipped_trades.json
+────────────────────────────────────────
+Created automatically when agent returns SKIP.
+Contains full trade dict + full agent verdict.
+These are NOT in paper_trades.json.
+Use for analyzing agent accuracy: were the skips correct decisions?
+
+================================================================================
+11. AUTOMATION — LAUNCHAGENTS (macOS)
+================================================================================
+
+macOS uses launchd instead of cron. Two plist files in project root control
+the automated scripts.
+
+────────────────────────────────────────
+com.predictionfund.snapshot.plist
+────────────────────────────────────────
+Runs: scripts/schedule_snapshots.py
+When: Every 10 minutes (StartInterval = 600 seconds)
+      Also runs at login (RunAtLoad = true)
+
+To install:
+  cp com.predictionfund.snapshot.plist ~/Library/LaunchAgents/
+  launchctl load ~/Library/LaunchAgents/com.predictionfund.snapshot.plist
+
+To check status:
+  launchctl list | grep predictionfund
+  launchctl print gui/$(id -u)/com.predictionfund.snapshot
+
+To restart after code changes:
+  launchctl kickstart -k gui/$(id -u)/com.predictionfund.snapshot
+
+Logs:
+  data/snapshots/launchd_out.log    ← stdout
+  data/snapshots/launchd_err.log    ← stderr (check here if stale)
+
+────────────────────────────────────────
+com.predictionfund.outcomes.plist
+────────────────────────────────────────
+Runs: scripts/update_outcomes.py
+When: 2:00 AM every night (StartCalendarInterval Hour=2 Minute=0)
+      Does NOT run at login (RunAtLoad = false)
+
+To install:
+  cp com.predictionfund.outcomes.plist ~/Library/LaunchAgents/
+  launchctl load ~/Library/LaunchAgents/com.predictionfund.outcomes.plist
+
+Logs:
+  data/snapshots/outcomes_out.log
+  data/snapshots/outcomes_err.log
+
+IMPORTANT: The Python path is hardcoded to miniconda:
+  /opt/homebrew/Caskroom/miniconda/base/bin/python3
+If your conda lives elsewhere, update the plist ProgramArguments before loading.
+
+On a new machine:
+  1. Install conda, ensure Python 3.13 is at the miniconda path, OR
+  2. Edit both plist files to use your actual Python path
+  3. Load the agents as above
+
+On Linux / non-Mac:
+  Convert to systemd services or cron entries:
+  # Cron equivalent for schedule_snapshots (every 10 min):
+  */10 * * * * /path/to/python /path/to/scripts/schedule_snapshots.py
+  # Cron equivalent for update_outcomes (2 AM daily):
+  0 2 * * * /path/to/python /path/to/scripts/update_outcomes.py
+
+================================================================================
+12. APIS — KEYS, ENDPOINTS, COST
+================================================================================
+
+────────────────────────────────────────
+KALSHI REST API
+────────────────────────────────────────
+URL: https://api.elections.kalshi.com/trade-api/v2
+Auth: None required for public market data (reading prices, results)
+Rate limit: Undocumented; ~1 req/sec is safe
+
+Key endpoints:
+  GET /markets?series_ticker=KXMLBGAME&status=open
+    → All open MLB game markets (paginated, limit=200)
+
+  GET /markets/{ticker}
+    → Single market details. After settlement, result field is populated:
+      result: "yes" or "no"
+      settled_price: 1 (yes won) or 0 (no won)
+
+  GET /markets/{ticker}/orderbook
+    → Live bid/ask. Used for snapshot k_prob calculation.
+
+TICKER FORMAT:
+  Event:  KXMLBGAME-26JUN241210TEXMIA
+  Market: KXMLBGAME-26JUN241210TEXMIA-MIA   ← MIA = YES side (home team wins)
+          KXMLBGAME-26JUN241210TEXMIA-TEX   ← TEX = YES side (away team wins)
+
+  Decoding: KX = Kalshi Exchange, MLBGAME = sport,
+            26JUN24 = June 24 2026, 1210 = 12:10 PM ET start,
+            TEXMIA = away-home abbreviations
+  Date format: DDMMMYY (24 June 2026 → 24JUN26)
+
+────────────────────────────────────────
+THEODDSAPI
+────────────────────────────────────────
+URL: https://api.theoddsapi.com
+Auth: ODDS_API_KEY in .env
+Docs: https://the-odds-api.com/liveapi/guides/v4/#get-sports
+
+Plans:
+  Free:     500 requests/month — too few for production
+  Business: Needed for historical data (fetch_odds_history.py used this)
+            Current key expires July 21, 2026 — renew or find alternative
+
+Key endpoints used:
+  GET /v4/sports/{sport_key}/odds
+    ?apiKey=...&regions=us&markets=h2h&bookmakers=pinnacle
+    → Current moneyline odds from Pinnacle for all games in a sport
+    sport_key: "baseball_mlb" or "basketball_nba"
+
+  GET /v4/sports/{sport_key}/odds-history  (Business plan)
+    ?apiKey=...&date={ISO}&markets=h2h&bookmakers=pinnacle
+    → Historical Pinnacle odds at a specific timestamp
+
+PINNACLE SPECIFICALLY: We use Pinnacle because it's the sharp book.
+  Low vig (~2-3%), accepts sharp money, doesn't limit winners.
+  Its lines represent professional consensus probability.
+  We never use any other sportsbook as the benchmark.
+
+────────────────────────────────────────
+ANTHROPIC API
+────────────────────────────────────────
+URL: https://api.anthropic.com
+Auth: ANTHROPIC_API_KEY in .env
+SDK: anthropic==0.111.0
+
+Model: claude-sonnet-4-6 (claude-sonnet-4-6)
+
+Beta feature used: web-search-2025-03-05
+  Called via:
+    client.beta.messages.create(
+      betas=["web-search-2025-03-05"],
+      tools=[{"type": "web_search_20250305", "name": "web_search"}]
+    )
+  This is a server-side search — Claude handles the search internally.
+  No tool_use blocks appear in response.content. stop_reason = "end_turn".
+
+Prompt caching:
+  System prompt sent with cache_control={"type": "ephemeral"}
+  5-minute TTL. Within a run where multiple trades are evaluated,
+  the system prompt is cached after first call, saving 90% on input tokens.
+
+Cost (June 2026 pricing):
+  Input tokens:     $3.00 per million
+  Cache read:       $0.30 per million   ← what we pay on subsequent calls
+  Output tokens:    $15.00 per million
+  Per trade (warm): ~$0.010–$0.013
+
+================================================================================
+13. RESEARCH AGENT — ARCHITECTURE DEEP DIVE
+================================================================================
+
+The agent is called from update_outcomes.py for EVERY new trade candidate.
+It acts as a barrier: only TRADE or MONITOR verdicts reach paper_trades.json.
+
+INFORMATION FLOW:
+  update_outcomes.py
+    → _build_agent_game_dict(trade)          ← formats trade as game_dict
+    → research_agent.run(game_dict)           ← the barrier call
+         → _fetch_current_pinnacle()          ← Check 1: re-fetch Pinnacle now
+         → _build_user_message()              ← builds prompt with context
+         → _make_api_call()                   ← Claude with web search
+         → parse JSON from response
+         → _print_and_log_cost()
+         → return verdict dict
+    → If SKIP: _append_skipped(), continue
+    → Else: trade.update(_agent_fields(verdict)), existing.append(trade)
+
+PROMPT DESIGN:
+  System prompt: ~1,500 tokens. Cached after first call.
+    - Role: "sports prediction market research analyst"
+    - SKIP signals: pitcher scratched, key injury, Pinnacle moved 3pp+, weather
+    - TRADE signals: roster confirmed, line stable, behavioral bias patterns
+    - "One confirmed injury overrides any number of behavioral signals"
+    - Output: JSON only, no markdown
+
+  User message: Built fresh per trade.
+    - Game details, gap amount, tier, hours before game
+    - Pinnacle stability result from Check 1
+    - Warning if hours_before_game > 3.0: "EARLY SNAPSHOT — extra scrutiny"
+    - Warning if abs_gap >= 0.20: "UNUSUALLY LARGE — extra scrutiny"
+    - Single web search instruction with pre-built query
+
+AGENTIC LOOP (max 8 turns):
+  Exists as infrastructure but rarely fires because web_search_20250305
+  runs server-side. For standard web searches, Claude returns end_turn
+  directly. The loop would handle tool_use blocks from other tool types.
+
+ERROR HANDLING:
+  Any exception → returns _default_verdict() with recommendation=MONITOR
+  MONITOR = trade gets logged with the uncertainty noted
+  This ensures the agent is never a point of failure that blocks data collection
+
+================================================================================
+14. DASHBOARD — HOW TO RUN
+================================================================================
+
+# From project root:
+streamlit run dashboard/app.py
+
+Opens at http://localhost:8501
+
+Auto-refreshes every 60 seconds via streamlit_autorefresh.
+All times displayed in Central Time (CT = America/Chicago).
+Change ET = ZoneInfo("America/Chicago") in dashboard/app.py to your local zone.
+
+If running on a different machine and the Streamlit app should be accessible
+on the network:
+  streamlit run dashboard/app.py --server.address 0.0.0.0 --server.port 8501
+
+Dark theme is set in .streamlit/config.toml.
+No sidebar (hidden via CSS). Fullscreen, dense layout.
+
+================================================================================
+15. CURRENT PERFORMANCE STATE (June 24, 2026)
+================================================================================
+
+Trade Record:
+  14 trades logged
+  5 resolved:  3W / 2L (60% overall win rate)
+  4 Tier 1 resolved: 2W / 2L (50%)
+  9 open (mostly timing-suspect from early snapshots)
+
+p-value: 0.50 — Need ~30 resolved Tier 1 clean trades for p < 0.05
+
+Key loss analysis:
+  Miami Marlins (1st snapshot, 42h early): LOSS
+    → Timing-suspect, doesn't count for clean record
+  CHC @ NYM (11.4% gap, 2.5h clean): LOSS (June 23)
+    → First resolved clean Tier 1 loss. Brings Tier 1 to 50%.
+    → This is expected at small sample sizes.
+
+Win rate needed for significance:
+  At 30 trades: need 18W/12L (60%) for p ≈ 0.10
+  At 30 trades: need 20W/10L (67%) for p ≈ 0.05
+  At 50 trades: need 31W/19L (62%) for p ≈ 0.05
+
+Days until YC deadline: July 27, 2026 (~33 days from June 24)
+Games per day in season: typically 1–3 flagged Tier 1 signals
+Projected resolved trades by July 27: ~25–40 (depending on game pace)
+
+================================================================================
+16. WHAT PHASE 2 NEEDS TO BUILD
+================================================================================
+
+In order of priority:
+
+1. Live trading module (trading/live_trader.py)
+   - Kalshi order placement API (requires API key with trading permissions)
+   - Position sizing logic
+   - LIVE_MODE flag that routes to real trades vs paper trades
+
+2. Position manager (trading/position_manager.py)
+   - Track open positions, P&L
+   - Max exposure per game, per day, per team
+   - Kelly criterion sizing based on gap magnitude and historical win rate
+
+3. agent/decision_engine.py
+   - Convert agent verdict + gap magnitude → position size recommendation
+   - Rules: min gap 5%, max position per game, bankroll percentage limits
+
+4. agent/signal_framework.py
+   - Sport-specific system prompts
+   - NFL: injury report (official Wednesday/Thursday/Friday report), weather
+   - NBA: rest days, back-to-back schedule, lineup rotations
+   - MLB: starter confirmed, bullpen usage last 3 days
+
+5. core/db.py
+   - SQLite migration (when trades > ~500)
+   - SQLAlchemy models: TradeLog, GapRecord, AgentDecision
+   - Drop-in replacement for JSON I/O in update_outcomes.py
+
+6. dashboard/reporter.py
+   - Morning email/Slack digest
+   - Overnight resolutions, new trades logged, win rate update
+
+7. Extend to NFL (September)
+   - KXNFLGAME series on Kalshi
+   - american_football_nfl on TheOddsAPI
+   - NFL-specific agent signals (injury report timing)
+
+================================================================================
+17. KNOWN ISSUES & EDGE CASES
+================================================================================
+
+FIXED (June 24, 2026):
+  Bug: schedule_snapshots.py crashed with AttributeError: 'list' object
+       has no attribute 'get'
+  Cause: get_well_captured_tickers() globbed *.json and hit missed_snapshots.json
+         (which is a list, not a dict)
+  Fix: Changed glob pattern to ????-??-??_????.json
+
+KNOWN QUIRKS:
+
+  1. UTC vs CT everywhere
+     All snapshot filenames are UTC. All displayed times are CT.
+     The fmt_snap_time() function converts between them.
+     ET = ZoneInfo("America/Chicago") in dashboard/app.py — change if needed.
+     The "today_str" for filtering uses CT. This means a snapshot taken at
+     11 PM CT might have a UTC filename of the next day — handled in the
+     dashboard by the 24-hour lookback window.
+
+  2. Timing-suspect trades (the 9 open ones)
+     Early snapshots (hours_before_game > 3) get marked timing_suspect=True.
+     These will be REPLACED when a clean snapshot (1h50m-2h10m) fires.
+     The replacement logic in update_outcomes.py uses event_ticker as key.
+     Until replaced, they sit in paper_trades.json as open timing-suspect trades.
+
+  3. Agent fields missing on 14 existing trades
+     All 14 trades in paper_trades.json predate the agent (logged before
+     agent was wired in June 24). Their agent_verdict fields are null.
+     The dashboard shows a note about this. agent_stats will stay at zero
+     until post-agent trades resolve.
+
+  4. Kalshi API pagination
+     /markets returns up to 200 results by default. If a sport has more than
+     200 active markets, results are paginated. The current code does not
+     handle pagination. For MLB mid-season this is fine; near season start
+     with all future games loaded it might truncate.
+
+  5. TheOddsAPI game matching
+     Matching Kalshi game events to TheOddsAPI events is done by time window
+     (±2 hours) + team name normalization. If both teams are new to normalizer.py
+     the match will fail silently and the snapshot won't have Pinnacle data.
+     Fix: add missing team names to analysis/normalizer.py maps.
+
+  6. Web search reliability
+     The web_search_20250305 beta is a research preview. It can occasionally
+     return outdated cached web pages. The agent is designed to be conservative
+     (SKIP beats TRADE when uncertain) so false positives on "no news" are less
+     damaging than false negatives on "injury detected."
+
+  7. No NBA games (as of June 24, 2026)
+     NBA Finals ended. No NBA games until October. The system handles this
+     gracefully (0 games found). All current activity is MLB.
+
+================================================================================
+18. GIT / WHAT IS AND ISN'T COMMITTED
+================================================================================
+
+SHOULD BE COMMITTED (track these):
+  All .py files (including stubs)
+  requirements.txt
+  CODEBASE.txt
+  .streamlit/config.toml
+  com.predictionfund.snapshot.plist
+  com.predictionfund.outcomes.plist
+  data/paper_trades.json              ← the track record — commit this
+  data/performance_summary.json       ← commit this
+  data/agent_cost_log.csv             ← commit this
+  dashboard/app.py
+  tests/
+
+SHOULD NOT BE COMMITTED (.gitignore these):
+  .env                                ← contains API keys — NEVER COMMIT
+  data/raw/                           ← large historical data files (~240 JSON)
+  data/snapshots/                     ← ephemeral runtime data
+  __pycache__/
+  *.pyc
+  .DS_Store
+  data/skipped_trades.json            ← runtime data, optional to commit
+
+SUGGESTED .gitignore additions if not already present:
+  .env
+  data/raw/
+  data/snapshots/
+  __pycache__/
+  *.pyc
+  .DS_Store
+
+NOTE ON PAPER_TRADES.JSON:
+  This file IS the product. It is our track record. Commit it with every
+  update so the git history shows the progression of the experiment.
+  Run "python scripts/update_outcomes.py" before committing to ensure
+  all resolutions are current.
+
+================================================================================
+END OF CODEBASE REFERENCE
+================================================================================

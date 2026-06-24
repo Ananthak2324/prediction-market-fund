@@ -1,0 +1,747 @@
+"""
+update_outcomes.py
+
+Runs nightly (2 AM via LaunchAgent). Resolves all open paper trades by
+checking settled Kalshi market results, then regenerates the performance
+summary with win rates, gap analysis, and statistical significance.
+
+Flow:
+  1. Scan all snapshot files → extract fav_flag=True trades into paper_trades.json
+  2. For each unresolved trade where game started >4 hours ago:
+       GET /markets/{kalshi_ticker} → check result (yes/no)
+  3. Update paper_trades.json with outcome, correct, resolution_price, resolved_at
+  4. Regenerate data/performance_summary.json
+  5. Print clean summary
+
+Usage:
+    python scripts/update_outcomes.py
+    python scripts/update_outcomes.py --dry-run    # resolve but don't save
+    python scripts/update_outcomes.py --force-all  # retry already-resolved trades
+"""
+import argparse
+import glob
+import json
+import os
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import requests
+from dotenv import load_dotenv
+from scipy.stats import binomtest
+
+load_dotenv()
+
+try:
+    from agent.research_agent import run as _agent_run
+    _AGENT_AVAILABLE = True
+except Exception:
+    _AGENT_AVAILABLE = False
+
+KALSHI_BASE    = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
+SNAPSHOT_DIR   = "data/snapshots"
+TRADES_FILE    = "data/paper_trades.json"
+SUMMARY_FILE   = "data/performance_summary.json"
+SKIPPED_FILE   = "data/skipped_trades.json"
+RESOLVE_AFTER  = 0.5   # hours after game start before we attempt resolution (Kalshi handles finalization)
+
+
+# ── paper trades I/O ──────────────────────────────────────────────────────────
+
+def load_trades() -> list[dict]:
+    if os.path.exists(TRADES_FILE):
+        with open(TRADES_FILE) as f:
+            return json.load(f)
+    return []
+
+
+def save_trades(trades: list[dict], dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
+    with open(TRADES_FILE, "w") as f:
+        json.dump(trades, f, indent=2)
+
+
+GAP_THRESHOLD = 0.05
+
+
+# ── agent helpers ─────────────────────────────────────────────────────────────
+
+def _build_agent_game_dict(trade: dict) -> dict:
+    game  = trade.get("game", "")
+    parts = game.split(" @ ")
+    away  = parts[0].strip() if len(parts) == 2 else ""
+    home  = parts[1].strip() if len(parts) == 2 else ""
+    abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
+    tier    = 1 if abs_gap >= 0.10 else 2
+    start   = trade.get("start_utc", "")
+    return {
+        "home_team":         home,
+        "away_team":         away,
+        "team":              trade.get("team", ""),
+        "side":              trade.get("side", "HOME"),
+        "game_time":         start,
+        "sport":             trade.get("sport", "MLB"),
+        "kalshi_prob":       trade.get("k_prob", 0),
+        "pinnacle_prob":     trade.get("v_prob", 0),
+        "gap":               trade.get("gap", 0),
+        "abs_gap":           abs_gap,
+        "gap_direction":     "kalshi_lower" if (trade.get("gap", 0) < 0) else "kalshi_higher",
+        "tier":              tier,
+        "signal":            trade.get("signal", ""),
+        "snapshot_time":     trade.get("snapshot_time", ""),
+        "date":              start[:10] if start else "",
+        "hours_before_game": trade.get("hours_before_game"),
+        "timing_suspect":    trade.get("timing_suspect", False),
+    }
+
+
+def _agent_fields(verdict: dict) -> dict:
+    return {
+        "agent_verdict":     verdict.get("recommendation"),
+        "agent_confidence":  verdict.get("confidence"),
+        "agent_reasoning":   verdict.get("reasoning"),
+        "gap_explanation":   verdict.get("gap_explanation"),
+        "gap_type":          verdict.get("gap_type"),
+        "news_found":        verdict.get("news_found"),
+        "news_detail":       verdict.get("news_detail"),
+        "news_source":       verdict.get("news_source"),
+        "pitcher_confirmed": verdict.get("pitcher_confirmed"),
+        "weather_issue":     verdict.get("weather_issue"),
+        "pinnacle_stable":   verdict.get("pinnacle_stable"),
+        "pinnacle_movement": verdict.get("pinnacle_movement"),
+    }
+
+
+def _append_skipped(trade: dict, verdict: dict) -> None:
+    """Log a SKIP decision to skipped_trades.json (never appears in paper_trades)."""
+    record = {
+        k: trade.get(k)
+        for k in ("trade_id", "game", "team", "signal", "gap", "abs_gap",
+                  "start_utc", "snapshot_time", "hours_before_game", "timing_suspect")
+    }
+    record.update({
+        "skipped_at":        datetime.now(timezone.utc).isoformat(),
+        "agent_reasoning":   verdict.get("reasoning"),
+        "news_found":        verdict.get("news_found"),
+        "news_detail":       verdict.get("news_detail"),
+        "pinnacle_stable":   verdict.get("pinnacle_stable"),
+        "pinnacle_movement": verdict.get("pinnacle_movement"),
+        "weather_issue":     verdict.get("weather_issue"),
+    })
+    existing: list[dict] = []
+    if os.path.exists(SKIPPED_FILE):
+        try:
+            with open(SKIPPED_FILE) as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    existing.append(record)
+    os.makedirs(os.path.dirname(SKIPPED_FILE), exist_ok=True)
+    with open(SKIPPED_FILE, "w") as f:
+        json.dump(existing, f, indent=2)
+
+
+def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
+    """
+    Scan all snapshot files chronologically. For each game (event_ticker):
+      - Log BUY_YES rows (Kalshi underprices) AND BUY_NO rows (Kalshi overprices)
+      - Only if the snapshot was taken BEFORE game start (pre-game price)
+      - If a cleaner snapshot (≤3h) arrives for an already-logged suspect trade,
+        replace the prices/timing while preserving any resolved outcome
+    Returns (updated_list, new_count, replaced_count).
+    """
+    # Index by event_ticker for O(1) replacement lookups
+    event_index: dict[str, int] = {t["event_ticker"]: i for i, t in enumerate(existing)}
+    new_count = 0
+    replaced_count = 0
+    skipped_count = 0
+
+    for snap_file in sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "*.json"))):
+        if os.path.basename(snap_file) in ("master_log.json", "missed_snapshots.json"):
+            continue
+        try:
+            with open(snap_file) as f:
+                snap = json.load(f)
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+        snap_time_str = snap.get("snapshot_time", "")
+        try:
+            snap_dt = datetime.strptime(snap_time_str, "%Y-%m-%d_%H%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+        for row in snap.get("rows", []):
+            # Accept BUY_YES (Kalshi underprices) and BUY_NO (Kalshi overprices)
+            gap = row.get("gap", 0)
+            if abs(gap) < GAP_THRESHOLD:
+                continue
+
+            event_ticker = row.get("event_ticker", "")
+
+            # Filter out in-game snapshots: snapshot must be BEFORE game start
+            start_str = row.get("start_utc", "")
+            try:
+                start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+
+            if snap_dt >= start_dt:
+                continue  # snapshot taken after game started — in-game price, skip
+
+            hours_before = (start_dt - snap_dt).total_seconds() / 3600
+            timing_suspect = hours_before > 3.0
+
+            new_signal = row.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")
+
+            trade = {
+                "trade_id":           f"{snap_time_str}|{event_ticker}",
+                "snapshot_time":      snap_time_str,
+                "snapshot_file":      os.path.basename(snap_file),
+                "sport":              row.get("sport", ""),
+                "game":               row.get("game", ""),
+                "team":               row.get("team", ""),
+                "side":               row.get("side", ""),
+                "start_utc":          start_str,
+                "kalshi_ticker":      row.get("kalshi_ticker", ""),
+                "event_ticker":       event_ticker,
+                "k_prob":             row.get("k_prob"),
+                "v_prob":             row.get("v_prob"),
+                "gap":                row.get("gap"),
+                "abs_gap":            row.get("abs_gap"),
+                "signal":             new_signal,
+                "book":               "pinnacle",
+                "hours_before_game":  round(hours_before, 2),
+                "timing_suspect":     timing_suspect,
+                "valid_for_analysis": True,
+                "replacement_flags":  [],
+                "outcome":            None,
+                "correct":            None,
+                "resolution_price":   None,
+                "resolved_at":        None,
+            }
+
+            if event_ticker not in event_index:
+                # Run agent before logging — it is the barrier between detection and execution
+                if _AGENT_AVAILABLE:
+                    verdict = _agent_run(_build_agent_game_dict(trade))
+                    rec = verdict.get("recommendation", "MONITOR")
+                    trade.update(_agent_fields(verdict))
+                    print(f"  [AGENT] {trade['game']} → {rec} ({verdict.get('confidence','?')})")
+                    if rec == "SKIP":
+                        _append_skipped(trade, verdict)
+                        skipped_count += 1
+                        continue  # Do not log to paper_trades
+                else:
+                    trade["agent_verdict"] = None
+
+                existing.append(trade)
+                event_index[event_ticker] = len(existing) - 1
+                new_count += 1
+
+            elif not timing_suspect and existing[event_index[event_ticker]].get("timing_suspect"):
+                # Cleaner snapshot arrived — validate before replacing
+                old = existing[event_index[event_ticker]]
+
+                flags: list[str] = []
+                if old.get("signal") != new_signal:
+                    flags.append("SIGNAL_FLIP")
+                if (row.get("abs_gap") or 0) < GAP_THRESHOLD:
+                    flags.append("BELOW_THRESHOLD")
+                if old.get("book") != trade["book"]:
+                    flags.append("BOOK_CHANGED")
+
+                trade["replacement_flags"]  = flags
+                trade["valid_for_analysis"] = not any(f in flags for f in ("SIGNAL_FLIP", "BELOW_THRESHOLD"))
+
+                # Preserve any resolved outcome
+                trade["outcome"]          = old.get("outcome")
+                trade["correct"]          = old.get("correct")
+                trade["resolution_price"] = old.get("resolution_price")
+                trade["resolved_at"]      = old.get("resolved_at")
+
+                # Re-run agent with clean snapshot data if trade is still open
+                if _AGENT_AVAILABLE and old.get("outcome") is None:
+                    verdict = _agent_run(_build_agent_game_dict(trade))
+                    trade.update(_agent_fields(verdict))
+                    print(f"  [AGENT re-eval] {trade['game']} → {verdict.get('recommendation','?')}")
+
+                existing[event_index[event_ticker]] = trade
+                replaced_count += 1
+            # else: already have a clean trade for this game — skip
+
+    return existing, new_count, replaced_count, skipped_count
+
+
+# ── timing backfill ──────────────────────────────────────────────────────────
+
+def backfill_timing(trades: list[dict]) -> int:
+    """Add hours_before_game / timing_suspect / valid_for_analysis to older trades."""
+    updated = 0
+    for t in trades:
+        changed = False
+        if "hours_before_game" not in t:
+            try:
+                snap_dt  = datetime.strptime(t["snapshot_time"], "%Y-%m-%d_%H%M").replace(tzinfo=timezone.utc)
+                start_dt = datetime.fromisoformat(t["start_utc"].replace("Z", "+00:00"))
+                hours    = (start_dt - snap_dt).total_seconds() / 3600
+                t["hours_before_game"] = round(hours, 2)
+                t["timing_suspect"]    = hours > 3.0
+                changed = True
+            except (ValueError, KeyError, AttributeError):
+                pass
+        # Default — trades that were never replaced are clean by definition
+        if "valid_for_analysis" not in t:
+            t["valid_for_analysis"] = True
+            changed = True
+        if "replacement_flags" not in t:
+            t["replacement_flags"] = []
+            changed = True
+        if changed:
+            updated += 1
+    return updated
+
+
+# ── Kalshi resolution ─────────────────────────────────────────────────────────
+
+def fetch_kalshi_result(ticker: str) -> dict | None:
+    """
+    Returns {"status", "result", "settlement_ts"} or None on error.
+    result = "yes"  → team won (BET_YES is a WIN)
+    result = "no"   → team lost (BET_YES is a LOSS)
+    """
+    try:
+        resp = requests.get(
+            f"{KALSHI_BASE}/markets/{ticker}",
+            timeout=15,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        m = resp.json().get("market", {})
+        return {
+            "status":         m.get("status"),
+            "result":         m.get("result"),
+            "settlement_ts":  m.get("settlement_ts"),
+        }
+    except Exception:
+        return None
+
+
+def should_resolve(trade: dict) -> bool:
+    """True if trade is open and game started more than RESOLVE_AFTER hours ago."""
+    if trade.get("outcome") is not None:
+        return False
+    start = trade.get("start_utc", "")
+    if not start:
+        return False
+    try:
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) >= start_dt + timedelta(hours=RESOLVE_AFTER)
+    except ValueError:
+        return False
+
+
+# ── resolve loop ──────────────────────────────────────────────────────────────
+
+def resolve_trades(trades: list[dict], dry_run: bool = False) -> tuple[int, int]:
+    """
+    Attempt resolution for all eligible open trades.
+    Returns (resolved_count, still_open_count).
+    """
+    to_resolve = [t for t in trades if should_resolve(t)]
+    resolved = 0
+    still_open = 0
+
+    for trade in to_resolve:
+        kalshi = fetch_kalshi_result(trade["kalshi_ticker"])
+        time.sleep(0.15)
+
+        if kalshi is None or kalshi["status"] != "finalized":
+            still_open += 1
+            continue
+
+        kalshi_yes = (kalshi["result"] == "yes")
+        # BUY_YES wins when the team wins; BUY_NO wins when the team loses
+        won = kalshi_yes if trade.get("signal") != "BUY_NO" else not kalshi_yes
+
+        if not dry_run:
+            trade["outcome"]           = "WIN" if won else "LOSS"
+            trade["correct"]           = won
+            trade["resolution_price"]  = 1.00 if won else 0.00
+            trade["resolved_at"]       = kalshi["settlement_ts"]
+
+        resolved += 1
+
+    return resolved, still_open
+
+
+# ── performance summary ───────────────────────────────────────────────────────
+
+def _build_agent_stats(trades: list[dict]) -> dict:
+    """Compute agent performance stats across logged + skipped trades."""
+    skipped: list[dict] = []
+    if os.path.exists(SKIPPED_FILE):
+        try:
+            with open(SKIPPED_FILE) as f:
+                skipped = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    evaluated    = [t for t in trades if t.get("agent_verdict") is not None]
+    trade_rec    = [t for t in evaluated if t["agent_verdict"] == "TRADE"]
+    monitor_rec  = [t for t in evaluated if t["agent_verdict"] == "MONITOR"]
+    skip_count   = len(skipped)
+    total_eval   = len(evaluated) + skip_count
+
+    skip_rate    = round(skip_count / total_eval, 4) if total_eval else None
+
+    # Win rate for agent-vetted trades only
+    vetted_res   = [t for t in evaluated if t.get("outcome") is not None]
+    vetted_wins  = [t for t in vetted_res if t["outcome"] == "WIN"]
+    wr_after     = round(len(vetted_wins) / len(vetted_res), 4) if vetted_res else None
+
+    # Win rate for trades without agent vetting (logged before agent existed)
+    unvetted_res = [t for t in trades if t.get("agent_verdict") is None and t.get("outcome") is not None]
+    unvetted_wins = [t for t in unvetted_res if t["outcome"] == "WIN"]
+    wr_without   = round(len(unvetted_wins) / len(unvetted_res), 4) if unvetted_res else None
+
+    # News found rate + Pinnacle unstable rate (across evaluated trades + skipped)
+    all_evals    = evaluated + skipped
+    news_found   = sum(1 for t in all_evals if t.get("news_found"))
+    pin_unstable = sum(1 for t in all_evals if t.get("pinnacle_stable") is False)
+    nf_rate      = round(news_found  / total_eval, 4) if total_eval else None
+    pu_rate      = round(pin_unstable / total_eval, 4) if total_eval else None
+
+    # Confidence-tier win rates
+    high_res  = [t for t in vetted_res if t.get("agent_confidence") == "HIGH"]
+    med_res   = [t for t in vetted_res if t.get("agent_confidence") == "MEDIUM"]
+    wr_high   = round(sum(1 for t in high_res if t["outcome"] == "WIN") / len(high_res), 4) if high_res else None
+    wr_med    = round(sum(1 for t in med_res  if t["outcome"] == "WIN") / len(med_res),  4) if med_res  else None
+
+    return {
+        "total_evaluated":          total_eval,
+        "trade_recommendations":    len(trade_rec),
+        "monitor_recommendations":  len(monitor_rec),
+        "skip_recommendations":     skip_count,
+        "skip_rate":                skip_rate,
+        "win_rate_after_agent":     wr_after,
+        "win_rate_without_agent":   wr_without,
+        "news_found_rate":          nf_rate,
+        "pinnacle_unstable_rate":   pu_rate,
+        "high_confidence_win_rate": wr_high,
+        "medium_confidence_win_rate": wr_med,
+    }
+
+
+def gap_bucket(abs_gap: float) -> str:
+    if abs_gap < 0.07:  return "5_7"
+    if abs_gap < 0.10:  return "7_10"
+    if abs_gap < 0.15:  return "10_15"
+    return "15_plus"
+
+
+def build_summary(trades: list[dict]) -> dict:
+    resolved     = [t for t in trades if t.get("outcome") is not None]
+    open_        = [t for t in trades if t.get("outcome") is None]
+    wins         = [t for t in resolved if t["outcome"] == "WIN"]
+
+    # Primary: only trades where the clean 2h signal agreed with original signal
+    valid        = [t for t in resolved if t.get("valid_for_analysis", True)]
+    valid_wins   = [t for t in valid if t["outcome"] == "WIN"]
+    excluded     = [t for t in resolved if not t.get("valid_for_analysis", True)]
+
+    win_rate     = len(valid_wins) / len(valid) if valid else None
+
+    # Binomial test vs 50% null hypothesis (primary / valid only)
+    p_value = None
+    if len(valid) >= 5:
+        result  = binomtest(len(valid_wins), len(valid), 0.5, alternative="greater")
+        p_value = round(result.pvalue, 4)
+
+    # Tier split: gap < 15% = tier 2, gap >= 15% = tier 1 (higher conviction)
+    tier1 = [t for t in resolved if (t.get("abs_gap") or 0) >= 0.15]
+    tier2 = [t for t in resolved if (t.get("abs_gap") or 0) <  0.15]
+    wr_t1 = sum(1 for t in tier1 if t["outcome"] == "WIN") / len(tier1) if tier1 else None
+    wr_t2 = sum(1 for t in tier2 if t["outcome"] == "WIN") / len(tier2) if tier2 else None
+
+    # Avg gap — winners vs losers
+    avg_gap_w = sum(t.get("abs_gap", 0) for t in resolved if t["outcome"] == "WIN") / len(wins) if wins else None
+    avg_gap_l = sum(t.get("abs_gap", 0) for t in resolved if t["outcome"] == "LOSS") / max(len(resolved) - len(wins), 1) if resolved else None
+
+    # By gap bucket
+    buckets: dict[str, dict] = {}
+    for t in resolved:
+        b = gap_bucket(t.get("abs_gap", 0))
+        buckets.setdefault(b, {"trades": 0, "wins": 0})
+        buckets[b]["trades"] += 1
+        if t["outcome"] == "WIN":
+            buckets[b]["wins"] += 1
+    by_bucket = {
+        b: {"trades": v["trades"], "win_rate": round(v["wins"] / v["trades"], 4)}
+        for b, v in buckets.items()
+    }
+
+    # By book
+    by_book: dict[str, dict] = {}
+    for t in resolved:
+        book = t.get("book", "unknown")
+        by_book.setdefault(book, {"trades": 0, "wins": 0})
+        by_book[book]["trades"] += 1
+        if t["outcome"] == "WIN":
+            by_book[book]["wins"] += 1
+    by_book_out = {
+        b: {"trades": v["trades"], "win_rate": round(v["wins"] / v["trades"], 4)}
+        for b, v in by_book.items()
+    }
+
+    # Clean vs suspect buckets — split on hours_before_game
+    def _bucket(subset: list[dict]) -> dict:
+        res  = [t for t in subset if t.get("outcome") is not None]
+        opn  = [t for t in subset if t.get("outcome") is None]
+        w    = [t for t in res if t["outcome"] == "WIN"]
+        wr   = round(len(w) / len(res), 4) if res else None
+        pv   = None
+        if len(res) >= 5:
+            pv = round(binomtest(len(w), len(res), 0.5, alternative="greater").pvalue, 4)
+        return {
+            "resolved": len(res),
+            "wins":     len(w),
+            "losses":   len(res) - len(w),
+            "win_rate": wr,
+            "open":     len(opn),
+            "p_value":  pv,
+        }
+
+    clean_trades   = [t for t in trades if not t.get("timing_suspect", False)
+                      and t.get("valid_for_analysis", True)]
+    suspect_trades = [t for t in trades if t.get("timing_suspect", False)]
+
+    return {
+        # ── top-level counts ──────────────────────────────────────────────
+        "total_logged":        len(trades),
+        "total_resolved":      len(resolved),
+        "total_valid":         len(valid),
+        "total_valid_wins":    len(valid_wins),
+        "total_excluded":      len(excluded),
+        "total_open":          len(open_),
+
+        # ── primary metric: clean timing only ────────────────────────────
+        "primary_metric":      "clean_trades",
+        "clean_trades":        _bucket(clean_trades),
+        "suspect_trades":      _bucket(suspect_trades),
+
+        # ── breakdown (primary / valid trades only) ───────────────────────
+        "win_rate_overall":    round(win_rate, 4) if win_rate is not None else None,
+        "win_rate_tier1":      round(wr_t1, 4) if wr_t1 is not None else None,
+        "win_rate_tier2":      round(wr_t2, 4) if wr_t2 is not None else None,
+        "avg_gap_winners":     round(avg_gap_w, 4) if avg_gap_w is not None else None,
+        "avg_gap_losers":      round(avg_gap_l, 4) if avg_gap_l is not None else None,
+        "p_value":             p_value,
+        "by_gap_bucket":       by_bucket,
+        "by_book":             by_book_out,
+
+        # ── excluded (signal flipped or gap closed at 2h mark) ────────────
+        "excluded_trades":     [
+            {
+                "team":              t["team"],
+                "game":              t["game"],
+                "signal":            t["signal"],
+                "gap":               t["gap"],
+                "outcome":           t["outcome"],
+                "replacement_flags": t.get("replacement_flags", []),
+            }
+            for t in excluded
+        ],
+        "last_updated":        datetime.now(timezone.utc).isoformat(),
+        "agent_stats":         _build_agent_stats(trades),
+    }
+
+
+def save_summary(summary: dict, dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    with open(SUMMARY_FILE, "w") as f:
+        json.dump(summary, f, indent=2)
+
+
+# ── print ─────────────────────────────────────────────────────────────────────
+
+def print_summary(trades: list[dict], summary: dict) -> None:
+    resolved    = [t for t in trades if t.get("outcome") is not None]
+    n_valid     = summary["total_valid"]
+    n_valid_wins = summary["total_valid_wins"]
+
+    print(f"\n{'═'*65}")
+    print(f"  PERFORMANCE SUMMARY  —  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"{'═'*65}\n")
+
+    print(f"  Trades logged    : {summary['total_logged']}")
+    print(f"  Resolved         : {summary['total_resolved']}")
+    print(f"  Open (pending)   : {summary['total_open']}")
+    print()
+
+    if not resolved:
+        print("  No resolved trades yet — check back after games complete.\n")
+        return
+
+    # ── Clean vs Suspect buckets ──────────────────────────────────────────────
+    def _fmt_bucket(label: str, b: dict, primary: bool = False) -> None:
+        tag = " ← PRIMARY" if primary else ""
+        if b["resolved"] == 0:
+            print(f"  {label:<22}: {b['open']} open, 0 resolved{tag}")
+            return
+        wr_str = f"{b['win_rate']:.1%}" if b["win_rate"] is not None else "—"
+        pv_str = f"  p={b['p_value']:.4f}" if b["p_value"] is not None else ""
+        sig_str = ""
+        if b["p_value"] is not None:
+            if b["p_value"] < 0.01:   sig_str = " ★★★"
+            elif b["p_value"] < 0.05: sig_str = " ★★"
+            elif b["p_value"] < 0.10: sig_str = " ★"
+        print(
+            f"  {label:<22}: {b['wins']}W / {b['losses']}L  "
+            f"({wr_str}){pv_str}{sig_str}  open={b['open']}{tag}"
+        )
+
+    print(f"  {'─'*60}")
+    _fmt_bucket("Clean  (≤3h)", summary["clean_trades"],   primary=True)
+    _fmt_bucket("Suspect (>3h)", summary["suspect_trades"], primary=False)
+    print(f"  {'─'*60}")
+    print()
+
+    n_valid    = summary["total_valid"]
+    n_excluded = summary["total_excluded"]
+    wr = summary["win_rate_overall"]
+    pv = summary["p_value"]
+    sig = ""
+    if pv is not None:
+        if pv < 0.01:   sig = "  ★★★ p<0.01 — HIGHLY SIGNIFICANT"
+        elif pv < 0.05: sig = "  ★★  p<0.05 — SIGNIFICANT"
+        elif pv < 0.10: sig = "  ★   p<0.10 — marginal"
+        else:           sig = "  (not yet significant)"
+
+    excl_note = f"  ({n_excluded} excluded — signal/gap invalid at 2h mark)" if n_excluded else ""
+    print(f"  Win rate (valid) : {wr:.1%}  ({n_valid_wins}/{n_valid}){sig}{excl_note}")
+    if pv is not None:
+        print(f"  p-value vs 50%   : {pv:.4f}")
+    print()
+
+    # Excluded trades (signal flipped or gap closed by 2h snapshot)
+    if summary["excluded_trades"]:
+        print(f"  EXCLUDED from analysis (replacement invalidated signal):")
+        for ex in summary["excluded_trades"]:
+            flags = ", ".join(ex["replacement_flags"])
+            print(f"    {ex['team']:<28} {ex['outcome']:<5}  gap={ex['gap']:+.1%}  flags={flags}")
+        print()
+
+    # Tier breakdown
+    t1_wr = summary.get("win_rate_tier1")
+    t2_wr = summary.get("win_rate_tier2")
+    if t1_wr is not None:
+        print(f"  Tier 1 (gap≥15%) : {t1_wr:.1%}")
+    if t2_wr is not None:
+        print(f"  Tier 2 (gap<15%) : {t2_wr:.1%}")
+    print()
+
+    # Gap bucket gradient
+    bucket_order = ["5_7", "7_10", "10_15", "15_plus"]
+    bucket_labels = {"5_7": "5–7%", "7_10": "7–10%", "10_15": "10–15%", "15_plus": "15%+"}
+    print(f"  Gap gradient:")
+    print(f"  {'Range':<10}  {'Trades':>6}  {'Win rate':>9}  Visual")
+    print(f"  {'─'*45}")
+    for b in bucket_order:
+        if b not in summary["by_gap_bucket"]:
+            continue
+        d   = summary["by_gap_bucket"][b]
+        bar = "█" * round(d["win_rate"] * 10)
+        print(f"  {bucket_labels[b]:<10}  {d['trades']:>6}  {d['win_rate']:>8.1%}  {bar}")
+    print()
+
+    # By book
+    print(f"  By book:")
+    print(f"  {'Book':<14}  {'Trades':>6}  {'Win rate':>9}")
+    print(f"  {'─'*35}")
+    for book in ["pinnacle", "draftkings", "fanduel"]:
+        if book not in summary["by_book"]:
+            continue
+        d = summary["by_book"][book]
+        print(f"  {book:<14}  {d['trades']:>6}  {d['win_rate']:>8.1%}")
+    print()
+
+    # Avg gap: winners vs losers
+    if summary["avg_gap_winners"] and summary["avg_gap_losers"]:
+        print(f"  Avg gap — winners : {summary['avg_gap_winners']:.1%}")
+        print(f"  Avg gap — losers  : {summary['avg_gap_losers']:.1%}")
+        if summary["avg_gap_winners"] > summary["avg_gap_losers"]:
+            print(f"  ↑ Larger gaps correlate with wins — edge is real")
+        print()
+
+    # Recent resolved trades
+    recent = sorted(
+        [t for t in resolved],
+        key=lambda x: x.get("resolved_at") or "",
+        reverse=True
+    )[:10]
+
+    if recent:
+        print(f"  Last {len(recent)} resolved trades:")
+        print(f"  {'TEAM':<28} {'GAME':<38} {'GAP':>7}  {'OUTCOME':<6}  RESOLVED")
+        print(f"  {'─'*95}")
+        for t in recent:
+            res_ts = (t.get("resolved_at") or "")[:10]
+            icon   = "✓" if t["outcome"] == "WIN" else "✗"
+            print(
+                f"  {t['team']:<28} {t['game']:<38}"
+                f"  {t['abs_gap']:>6.1%}  {icon} {t['outcome']:<4}  {res_ts}"
+            )
+    print()
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run",   action="store_true", help="Resolve but don't write files")
+    parser.add_argument("--force-all", action="store_true", help="Re-resolve all trades including already-resolved")
+    args = parser.parse_args()
+
+    if args.force_all:
+        for t in (trades := load_trades()):
+            t["outcome"] = t["correct"] = t["resolution_price"] = t["resolved_at"] = None
+    else:
+        trades = load_trades()
+
+    # 1. Ingest new trades from snapshots (agent gates every new trade)
+    trades, new_count, replaced_count, skipped_count = ingest_new_trades(trades)
+    backfilled = backfill_timing(trades)
+    if backfilled:
+        print(f"Backfilled timing fields for {backfilled} existing trade(s).")
+    if replaced_count:
+        print(f"Replaced {replaced_count} timing-suspect trade(s) with cleaner snapshot(s).")
+    print(f"Ingested {new_count} new trade(s) from snapshots.  Skipped by agent: {skipped_count}")
+    print(f"Total trades: {len(trades)}  |  Open: {sum(1 for t in trades if t['outcome'] is None)}")
+
+    # 2. Resolve eligible open trades
+    resolved, still_open = resolve_trades(trades, dry_run=args.dry_run)
+    print(f"Resolved: {resolved}  |  Still pending (game not finished): {still_open}")
+
+    # 3. Save trades
+    save_trades(trades, dry_run=args.dry_run)
+
+    # 4. Build + save summary
+    summary = build_summary(trades)
+    save_summary(summary, dry_run=args.dry_run)
+
+    # 5. Print
+    print_summary(trades, summary)
+
+    if args.dry_run:
+        print("  [dry-run] No files written.\n")
+
+
+if __name__ == "__main__":
+    main()

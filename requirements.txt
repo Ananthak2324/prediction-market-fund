@@ -1,0 +1,16 @@
+requests
+pandas>=2.0
+numpy
+matplotlib
+seaborn
+scipy
+python-dotenv
+sqlalchemy
+loguru
+rich
+jupyter
+pytest
+anthropic>=0.111.0
+streamlit>=1.58.0
+streamlit-autorefresh
+plotly>=6.0

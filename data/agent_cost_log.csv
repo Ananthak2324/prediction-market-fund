@@ -1,0 +1,3 @@
+timestamp,game,input_tokens,output_tokens,cache_read_tokens,search_calls,estimated_cost_usd
+2026-06-24 03:33 UTC,Texas Rangers @ Miami Marlins,925,433,2291,0,0.009957
+2026-06-24 03:33 UTC,Texas Rangers @ Miami Marlins,925,466,12684,0,0.01357
