@@ -251,6 +251,13 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                 event_index[event_ticker] = len(existing) - 1
                 new_count += 1
 
+                # Open a sandbox position for June 25+ trades
+                try:
+                    from execution.position_manager import open_sandbox_position
+                    open_sandbox_position(trade)
+                except Exception as _sb_err:
+                    print(f"  [SANDBOX] open_sandbox_position skipped: {_sb_err}")
+
             elif not timing_suspect and existing[event_index[event_ticker]].get("timing_suspect"):
                 # Cleaner snapshot arrived — validate before replacing
                 old = existing[event_index[event_ticker]]
@@ -739,6 +746,14 @@ def main() -> None:
 
     # 3. Save trades
     save_trades(trades, dry_run=args.dry_run)
+
+    # 3b. Settle any sandbox positions whose paper trade just resolved
+    if not args.dry_run:
+        try:
+            from execution.position_manager import settle_resolved_positions
+            settle_resolved_positions(trades)
+        except Exception as _sb_err:
+            print(f"  [SANDBOX] settle_resolved_positions skipped: {_sb_err}")
 
     # 4. Build + save summary
     summary = build_summary(trades)

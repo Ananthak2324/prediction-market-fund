@@ -337,7 +337,7 @@ for col, label, val, sub in _cards:
 st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📡 Live Gaps", "📋 Trade Log", "📈 Performance", "⚙️ System"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📡 Live Gaps", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -721,9 +721,295 @@ with tab3:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — SYSTEM STATUS
+# TAB 4 — SANDBOX PORTFOLIO
 # ══════════════════════════════════════════════════════════════════════════════
 with tab4:
+    import sqlite3 as _sqlite3
+
+    _DB = _p("data", "paper_trades.db")
+
+    def _sb_load() -> tuple[dict, list[dict], list[dict], list[dict]]:
+        """Returns (config, open_trades, closed_trades, bankroll_history)."""
+        if not os.path.exists(_DB):
+            return {}, [], [], []
+        try:
+            conn = _sqlite3.connect(_DB)
+            conn.row_factory = _sqlite3.Row
+            cfg = conn.execute("SELECT * FROM sandbox_config WHERE id=1").fetchone()
+            config = dict(cfg) if cfg else {}
+            open_t  = [dict(r) for r in conn.execute(
+                "SELECT * FROM sandbox_trades WHERE status='OPEN' ORDER BY created_at DESC"
+            ).fetchall()]
+            closed_t = [dict(r) for r in conn.execute(
+                "SELECT * FROM sandbox_trades WHERE status='CLOSED' ORDER BY exit_time DESC"
+            ).fetchall()]
+            history = [dict(r) for r in conn.execute(
+                "SELECT * FROM sandbox_bankroll_history ORDER BY timestamp ASC"
+            ).fetchall()]
+            conn.close()
+            return config, open_t, closed_t, history
+        except Exception:
+            return {}, [], [], []
+
+    @st.cache_data(ttl=60)
+    def _fetch_live_prices(tickers_signal: list[tuple[str, str]]) -> dict[str, float]:
+        """Fetch current contract prices for open positions (60s cache)."""
+        KALSHI = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
+        prices = {}
+        import requests as _req
+        for ticker, signal in tickers_signal:
+            try:
+                r = _req.get(f"{KALSHI}/markets/{ticker}", timeout=8)
+                if r.status_code != 200:
+                    continue
+                m   = r.json().get("market", {})
+                bid = float(m.get("yes_bid_dollars") or 0)
+                ask = float(m.get("yes_ask_dollars") or 1)
+                if bid == 0 and ask >= 0.99:
+                    continue
+                yes_mid = (bid + ask) / 2.0
+                prices[ticker] = yes_mid if signal == "BUY_YES" else round(1.0 - yes_mid, 4)
+            except Exception:
+                pass
+        return prices
+
+    sb_config, sb_open, sb_closed, sb_history = _sb_load()
+
+    if not sb_config:
+        st.info("Sandbox not initialized yet. Run `python scripts/backfill_sandbox.py` to set up.")
+    else:
+        bankroll_start   = sb_config.get("bankroll_start", 1000.0)
+        total_pnl        = sum(t.get("pnl_dollars") or 0 for t in sb_closed)
+        total_bankroll   = bankroll_start + total_pnl
+        capital_deployed = sum(t.get("actual_cost") or 0 for t in sb_open)
+        available_cash   = total_bankroll - capital_deployed
+        total_return_pct = (total_bankroll - bankroll_start) / bankroll_start if bankroll_start else 0
+        pnl_sign         = "+" if total_pnl >= 0 else ""
+
+        # ── ROW 1: Metric cards ───────────────────────────────────────────────
+        sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+        deployed_pct = capital_deployed / total_bankroll if total_bankroll else 0
+        _sb_cards = [
+            (sc1, "Starting Bankroll", f"<span class='gray'>${bankroll_start:,.2f}</span>", "&nbsp;"),
+            (sc2, "Current Bankroll",
+             f"<span class='{'teal' if total_bankroll >= bankroll_start else 'red'}'>${total_bankroll:,.2f}</span>",
+             "&nbsp;"),
+            (sc3, "Total Return",
+             f"<span class='{'teal' if total_pnl >= 0 else 'red'}'>{pnl_sign}${total_pnl:.2f}</span>",
+             f"{pnl_sign}{total_return_pct * 100:.2f}%"),
+            (sc4, "Available Cash", f"<span class='teal'>${available_cash:,.2f}</span>", "&nbsp;"),
+            (sc5, "Capital Deployed",
+             f"<span class='{'yellow' if deployed_pct > 0.30 else 'teal'}'>${capital_deployed:.2f}</span>",
+             f"{deployed_pct * 100:.1f}% of bankroll"),
+            (sc6, "Open Positions", f"<span class='teal'>{len(sb_open)}</span>", "&nbsp;"),
+        ]
+        for col, label, val, sub in _sb_cards:
+            with col:
+                st.markdown(f"""
+                <div class="mcard">
+                  <div class="mlabel">{label}</div>
+                  <div class="mval">{val}</div>
+                  <div class="msub">{sub}</div>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
+
+        # ── ROW 2: Charts ─────────────────────────────────────────────────────
+        ch1, ch2 = st.columns(2)
+
+        with ch1:
+            st.markdown("**Bankroll Over Time**")
+            if sb_history:
+                hist_df = pd.DataFrame(sb_history)
+                hist_df["timestamp"] = pd.to_datetime(hist_df["timestamp"])
+                hist_df = hist_df[hist_df["event_type"] == "TRADE_CLOSE"].copy()
+
+                if hist_df.empty:
+                    # Show just the starting point
+                    hist_df = pd.DataFrame([{
+                        "timestamp": pd.Timestamp(sb_config.get("start_date", "2026-06-25")),
+                        "bankroll":  bankroll_start,
+                    }])
+
+                # Insert starting point
+                start_row = pd.DataFrame([{
+                    "timestamp": hist_df["timestamp"].min() - pd.Timedelta(minutes=1),
+                    "bankroll":  bankroll_start,
+                }])
+                hist_df = pd.concat([start_row, hist_df[["timestamp","bankroll"]]], ignore_index=True)
+
+                peak = hist_df["bankroll"].max()
+
+                fig_bk = go.Figure()
+                fig_bk.add_hline(y=bankroll_start, line_dash="dash",
+                                  line_color="#374151", line_width=1,
+                                  annotation_text="Start $1,000",
+                                  annotation_font_color="#6B7280", annotation_font_size=9)
+                fig_bk.add_trace(go.Scatter(
+                    x=hist_df["timestamp"], y=hist_df["bankroll"],
+                    mode="lines+markers",
+                    line=dict(color="#00C896", width=2),
+                    marker=dict(size=5),
+                    fill="tozeroy",
+                    fillcolor="rgba(0,200,150,0.08)",
+                    name="Bankroll",
+                ))
+                fig_bk.add_annotation(
+                    x=hist_df["timestamp"].iloc[-1], y=hist_df["bankroll"].iloc[-1],
+                    text=f"Now ${total_bankroll:,.2f}",
+                    showarrow=True, arrowcolor="#00C896",
+                    font=dict(color="#00C896", size=10),
+                )
+                if peak > bankroll_start:
+                    peak_row = hist_df.loc[hist_df["bankroll"].idxmax()]
+                    fig_bk.add_annotation(
+                        x=peak_row["timestamp"], y=peak,
+                        text=f"Peak ${peak:,.2f}",
+                        showarrow=False,
+                        font=dict(color="#F59E0B", size=9),
+                        yshift=12,
+                    )
+                fig_bk.update_layout(showlegend=False, yaxis=dict(tickprefix="$"))
+                st.plotly_chart(dark_plotly(fig_bk), use_container_width=True)
+            else:
+                st.info("No closed positions yet — chart will appear after first exit.")
+
+        with ch2:
+            st.markdown("**P&L per Trade**")
+            if sb_closed:
+                pnl_df = pd.DataFrame(sb_closed)
+                pnl_df = pnl_df.sort_values("exit_time")
+                pnl_df["label"] = pnl_df["game"].apply(lambda g: g.split(" @ ")[-1][:12])
+                bar_colors = ["#00C896" if v >= 0 else "#EF4444" for v in pnl_df["pnl_dollars"]]
+                fig_pnl = go.Figure(go.Bar(
+                    x=pnl_df["label"],
+                    y=pnl_df["pnl_dollars"],
+                    marker_color=bar_colors,
+                    text=[f"${v:+.2f}" for v in pnl_df["pnl_dollars"]],
+                    textposition="outside",
+                    textfont=dict(size=10, color="#E5E7EB"),
+                    customdata=pnl_df[["game","exit_type","shares","entry_price","exit_price"]].values,
+                    hovertemplate=(
+                        "<b>%{customdata[0]}</b><br>"
+                        "Exit: %{customdata[1]}<br>"
+                        "Shares: %{customdata[2]}<br>"
+                        "Entry: $%{customdata[3]:.3f}  Exit: $%{customdata[4]:.3f}<br>"
+                        "P&L: $%{y:+.2f}<extra></extra>"
+                    ),
+                ))
+                fig_pnl.add_hline(y=0, line_color="#374151", line_width=1)
+                fig_pnl.update_layout(showlegend=False, yaxis=dict(tickprefix="$"))
+                st.plotly_chart(dark_plotly(fig_pnl), use_container_width=True)
+            else:
+                st.info("No closed positions yet.")
+
+        # ── ROW 3: Open Positions ─────────────────────────────────────────────
+        st.markdown("**Open Positions**")
+        if not sb_open:
+            st.info("No open positions.")
+        else:
+            ticker_signal_pairs = [(t["kalshi_ticker"], t["signal"]) for t in sb_open]
+            live_prices = _fetch_live_prices(ticker_signal_pairs)
+
+            open_rows = []
+            for t in sb_open:
+                cp   = live_prices.get(t["kalshi_ticker"])
+                ep   = t["entry_price"] or 0
+                pp   = t["pinnacle_prob"] or 0
+                unr  = round((cp - ep) * (t["shares"] or 0), 2) if cp else None
+                unr_pct = round((cp - ep) / ep * 100, 1) if cp and ep else None
+
+                if cp is not None:
+                    triggers = []
+                    pnl_pct_f = (cp - ep) / ep if ep else 0
+                    if cp >= pp:
+                        triggers.append("FAIR_VALUE")
+                    elif pnl_pct_f <= -0.40:
+                        triggers.append("STOP_LOSS")
+                    elif pnl_pct_f >= 0.80:
+                        triggers.append("PROFIT_TARGET")
+                    next_trigger = triggers[0] if triggers else "HOLD"
+                else:
+                    next_trigger = "—"
+
+                open_rows.append({
+                    "Game":             t["game"],
+                    "Signal":           t["signal"],
+                    "Shares":           t["shares"],
+                    "Entry":            f"${ep:.3f}",
+                    "Current":          f"${cp:.3f}" if cp else "—",
+                    "Fair Value":       f"${pp:.3f}",
+                    "Unreal P&L ($)":   f"${unr:+.2f}" if unr is not None else "—",
+                    "P&L %":            f"{unr_pct:+.1f}%" if unr_pct is not None else "—",
+                    "Next Trigger":     next_trigger,
+                    "Cost":             f"${t['actual_cost']:.2f}",
+                })
+            st.dataframe(pd.DataFrame(open_rows), use_container_width=True, hide_index=True)
+
+        # ── ROW 4: Closed Positions ───────────────────────────────────────────
+        st.markdown("**Closed Positions**")
+        if not sb_closed:
+            st.info("No closed positions yet.")
+        else:
+            closed_rows = []
+            for t in sb_closed:
+                closed_rows.append({
+                    "Game":         t["game"],
+                    "Entry Date":   t["entry_date"] or "—",
+                    "Exit":         str(t.get("exit_time") or "")[:16].replace("T", " "),
+                    "Shares":       t["shares"],
+                    "Entry $":      f"${(t['entry_price'] or 0):.3f}",
+                    "Exit $":       f"${(t['exit_price'] or 0):.3f}",
+                    "Exit Type":    t.get("exit_type") or "—",
+                    "P&L $":        f"${(t['pnl_dollars'] or 0):+.2f}",
+                    "P&L %":        f"{(t['pnl_pct'] or 0) * 100:+.1f}%",
+                    "Kelly Used":   f"{(t['position_fraction'] or 0) * 100:.2f}%",
+                })
+            closed_df = pd.DataFrame(closed_rows)
+            st.dataframe(closed_df, use_container_width=True, hide_index=True)
+
+            # Footer totals
+            total_closed_pnl = sum(t.get("pnl_dollars") or 0 for t in sb_closed)
+            avg_ret = sum(t.get("pnl_pct") or 0 for t in sb_closed) / len(sb_closed)
+            best    = max(sb_closed, key=lambda t: t.get("pnl_dollars") or 0)
+            worst   = min(sb_closed, key=lambda t: t.get("pnl_dollars") or 0)
+            st.markdown(
+                f"<div style='font-size:11px;color:#6B7280;margin-top:4px'>"
+                f"Total P&L: <b style='color:{'#10B981' if total_closed_pnl>=0 else '#EF4444'}'>"
+                f"${total_closed_pnl:+.2f}</b> &nbsp;·&nbsp; "
+                f"Avg return: <b style='color:#9CA3AF'>{avg_ret*100:+.1f}%</b> &nbsp;·&nbsp; "
+                f"Best: <b style='color:#10B981'>${(best.get('pnl_dollars') or 0):+.2f}</b> &nbsp;·&nbsp; "
+                f"Worst: <b style='color:#EF4444'>${(worst.get('pnl_dollars') or 0):+.2f}</b>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ── ROW 5: Exit Rule Performance ──────────────────────────────────────
+        st.markdown("<div style='margin-top:14px'></div>", unsafe_allow_html=True)
+        st.markdown("**Exit Rule Performance**")
+        exit_rules = ["FAIR_VALUE", "STOP_LOSS", "PROFIT_TARGET", "NEAR_RESOLUTION", "RESOLUTION"]
+        exit_rows = []
+        for rule in exit_rules:
+            trades_for_rule = [t for t in sb_closed if t.get("exit_type") == rule]
+            n = len(trades_for_rule)
+            if n == 0:
+                exit_rows.append({"Rule": rule, "Count": 0, "Avg Return": "—", "Total P&L": "—"})
+                continue
+            avg_r   = sum(t.get("pnl_pct") or 0 for t in trades_for_rule) / n
+            tot_pnl = sum(t.get("pnl_dollars") or 0 for t in trades_for_rule)
+            exit_rows.append({
+                "Rule":       rule,
+                "Count":      n,
+                "Avg Return": f"{avg_r * 100:+.1f}%",
+                "Total P&L":  f"${tot_pnl:+.2f}",
+            })
+        st.dataframe(pd.DataFrame(exit_rows), use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — SYSTEM STATUS
+# ══════════════════════════════════════════════════════════════════════════════
+with tab5:
     # Precompute values used across multiple cards
     today_snaps    = [f for f in all_snap_files if os.path.basename(f).startswith(today_str)]
     n_snap_days    = len(set(os.path.basename(f)[:10] for f in all_snap_files))
