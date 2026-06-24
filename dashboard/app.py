@@ -430,7 +430,24 @@ with tab2:
     else:
         df = trades_df.copy()
 
-        fc1, fc2, fc3 = st.columns([2, 2, 2])
+        # Build game_date_et for filtering (raw date string in ET)
+        def _game_date_et(utc_str):
+            try:
+                dt = datetime.fromisoformat(str(utc_str).replace("Z", "+00:00"))
+                return dt.astimezone(ET).strftime("%Y-%m-%d")
+            except Exception:
+                return None
+
+        if "start_utc" in df.columns:
+            df["_game_date"] = df["start_utc"].apply(_game_date_et)
+        else:
+            df["_game_date"] = None
+
+        # Sorted unique game dates for the dropdown (display as "Jun 22")
+        raw_dates = sorted(df["_game_date"].dropna().unique().tolist())
+        date_labels = {d: datetime.strptime(d, "%Y-%m-%d").strftime("%b %-d") for d in raw_dates}
+
+        fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
         with fc1:
             sports    = ["All"] + sorted(df["sport"].dropna().unique().tolist())
             sel_sport = st.selectbox("Sport", sports, key="t2_sport")
@@ -438,6 +455,9 @@ with tab2:
             sel_outcome = st.selectbox("Outcome", ["All", "WIN", "LOSS", "OPEN", "SKIPPED"], key="t2_outcome")
         with fc3:
             sel_tier = st.selectbox("Tier", ["All", "Tier 1", "Tier 2"], key="t2_tier")
+        with fc4:
+            date_options = ["All"] + [date_labels[d] for d in raw_dates]
+            sel_date_label = st.selectbox("Game Date", date_options, key="t2_game_date")
 
         if sel_sport != "All":
             df = df[df["sport"] == sel_sport]
@@ -450,6 +470,11 @@ with tab2:
                 df = df[df["abs_gap"] >= 0.10]
             elif sel_tier == "Tier 2":
                 df = df[df["abs_gap"] < 0.10]
+        if sel_date_label != "All":
+            # Map label back to raw date
+            sel_raw_date = next((d for d, lbl in date_labels.items() if lbl == sel_date_label), None)
+            if sel_raw_date:
+                df = df[df["_game_date"] == sel_raw_date]
 
         df = df.sort_values("snapshot_time", ascending=False)
 
