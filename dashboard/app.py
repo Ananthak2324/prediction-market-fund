@@ -507,6 +507,7 @@ with tab2:
         display = pd.DataFrame({
             "ID":         df["trade_id"].apply(_short_id),
             "Game Date":  df["start_utc"].apply(_fmt_game_date) if "start_utc" in df.columns else "—",
+            "Game Start": df["start_utc"].apply(fmt_game_time) if "start_utc" in df.columns else "—",
             "Snap Date":  df["snapshot_time"].apply(_fmt_snap_date),
             "Game":       df["game"],
             "Signal":     df["signal"],
