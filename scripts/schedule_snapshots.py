@@ -2,22 +2,26 @@
 schedule_snapshots.py
 
 Runs every 10 min via LaunchAgent.
-For each upcoming game, captures a pre-game snapshot in the exact 20-minute
-window centered at 2 hours before first pitch:
+Game start times are decoded from the Kalshi event ticker (YYMMMDDHHMM in ET),
+NOT from occurrence_datetime which carries a known 3-hour UTC/ET confusion error.
 
-    snapshot_window_open  = start_utc − 2h 10min
-    snapshot_window_close = start_utc − 1h 50min
+Ticker format: KXMLBGAME-26JUN241210TEXMIA
+  26   = year 2026
+  JUN  = June
+  24   = 24th
+  1210 = 12:10 PM Eastern Time  →  16:10 UTC
 
-If the script was not running during a game's window, logs a MISSED_SNAPSHOT
-entry so we know what data was lost.
+For each upcoming game whose start is 110-130 min away (20-min window):
+  - Triggers snapshot_gaps.py to capture live Kalshi + Pinnacle prices
 
 Logs:
   data/snapshots/scheduler_log.txt     — timing + status every 10 min
-  data/snapshots/missed_snapshots.json — games whose window was missed entirely
+  data/snapshots/missed_snapshots.json — games whose window was missed
 """
 import glob
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -28,7 +32,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── config ────────────────────────────────────────────────────────────────────
+from core.utils import ticker_to_utc
 
 KALSHI_BASE  = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 SNAPSHOT_DIR = "data/snapshots"
@@ -36,8 +40,8 @@ LOG_FILE     = os.path.join(SNAPSHOT_DIR, "scheduler_log.txt")
 MISSED_LOG   = os.path.join(SNAPSHOT_DIR, "missed_snapshots.json")
 
 # 20-minute window centered at 2h before game: [start − 2h10m, start − 1h50m]
-WINDOW_MIN = 110   # minutes before game (window opens at this many min away)
-WINDOW_MAX = 130   # minutes before game (window closes at this many min away)
+WINDOW_MIN = 110   # minutes before game (window opens)
+WINDOW_MAX = 130   # minutes before game (window closes)
 
 SERIES = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME"}
 
@@ -54,7 +58,13 @@ def log(msg: str) -> None:
 
 
 def fetch_games(series_ticker: str) -> list[dict]:
-    """Return one entry per event_ticker: {event_ticker, start_dt, label}."""
+    """
+    Return one entry per unique event_ticker: {event_ticker, start_utc, label}.
+
+    start_utc is parsed from the ticker (e.g. '1210' = 12:10 PM ET → UTC),
+    NOT from occurrence_datetime which is 3 hours off on all Kalshi markets.
+    Games whose ticker can't be parsed are silently skipped.
+    """
     try:
         resp = requests.get(
             f"{KALSHI_BASE}/markets",
@@ -69,19 +79,17 @@ def fetch_games(series_ticker: str) -> list[dict]:
 
     seen: dict[str, dict] = {}
     for m in markets:
-        et  = m.get("event_ticker", "")
-        occ = m.get("occurrence_datetime", "")
-        if not et or not occ or et in seen:
+        et = m.get("event_ticker", "")
+        if not et or et in seen:
             continue
-        try:
-            dt = datetime.fromisoformat(occ.replace("Z", "+00:00"))
-            seen[et] = {
-                "event_ticker": et,
-                "start_dt":     dt,
-                "label":        m.get("yes_sub_title", et),
-            }
-        except ValueError:
-            pass
+        start_utc = ticker_to_utc(et)
+        if start_utc is None:
+            continue
+        seen[et] = {
+            "event_ticker": et,
+            "start_utc":    start_utc,
+            "label":        m.get("yes_sub_title", et),
+        }
 
     return list(seen.values())
 
@@ -89,10 +97,9 @@ def fetch_games(series_ticker: str) -> list[dict]:
 def get_well_captured_tickers(games: list[dict]) -> set[str]:
     """
     Return event_tickers that already have a properly-timed snapshot
-    (taken 1.5h–2.5h before game start). Early captures (timing_suspect)
-    don't count — the game needs a fresh snapshot in its real window.
+    (taken 1.5h–2.5h before game start, using ticker-derived start times).
     """
-    start_by_ticker = {g["event_ticker"]: g["start_dt"] for g in games}
+    start_by_ticker = {g["event_ticker"]: g["start_utc"] for g in games}
     well_captured: set[str] = set()
 
     for snap_file in glob.glob(os.path.join(SNAPSHOT_DIR, "????-??-??_????.json")):
@@ -119,9 +126,9 @@ def log_missed(game: dict, now: datetime) -> None:
     record = {
         "event_ticker":     game["event_ticker"],
         "label":            game["label"],
-        "game_start_utc":   game["start_dt"].isoformat(),
-        "window_open_utc":  (game["start_dt"] - timedelta(minutes=WINDOW_MAX)).isoformat(),
-        "window_close_utc": (game["start_dt"] - timedelta(minutes=WINDOW_MIN)).isoformat(),
+        "game_start_utc":   game["start_utc"].isoformat(),
+        "window_open_utc":  (game["start_utc"] - timedelta(minutes=WINDOW_MAX)).isoformat(),
+        "window_close_utc": (game["start_utc"] - timedelta(minutes=WINDOW_MIN)).isoformat(),
         "detected_at":      now.isoformat(),
     }
 
@@ -133,8 +140,7 @@ def log_missed(game: dict, now: datetime) -> None:
         except (json.JSONDecodeError, ValueError):
             pass
 
-    already_logged = {r["event_ticker"] for r in existing}
-    if record["event_ticker"] in already_logged:
+    if record["event_ticker"] in {r["event_ticker"] for r in existing}:
         return
 
     existing.append(record)
@@ -148,8 +154,7 @@ def log_missed(game: dict, now: datetime) -> None:
 
 
 def run_snapshot() -> bool:
-    """Run snapshot_gaps.py and return True if successful."""
-    import subprocess
+    """Invoke snapshot_gaps.py and return True on success."""
     result = subprocess.run(
         [sys.executable, "scripts/snapshot_gaps.py", "--sport", "mlb"],
         capture_output=True,
@@ -181,11 +186,11 @@ def main() -> None:
 
     captured_tickers = get_well_captured_tickers(all_games)
 
-    in_window:    list[dict] = []   # games needing a snapshot right now
-    missed_games: list[dict] = []   # games whose window just closed without a snap
+    in_window:    list[dict] = []
+    missed_games: list[dict] = []
 
     for game in all_games:
-        minutes_away = (game["start_dt"] - now).total_seconds() / 60
+        minutes_away = (game["start_utc"] - now).total_seconds() / 60
         already      = game["event_ticker"] in captured_tickers
 
         if WINDOW_MIN <= minutes_away <= WINDOW_MAX:
@@ -193,35 +198,34 @@ def main() -> None:
                 log(f"  IN WINDOW (already snapped): {game['event_ticker']}")
             else:
                 in_window.append(game)
-                log(f"  IN WINDOW — needs snapshot: {game['event_ticker']} starts in {minutes_away:.0f} min")
+                log(f"  IN WINDOW — needs snapshot: {game['event_ticker']} "
+                    f"starts in {minutes_away:.0f} min")
 
         elif 0 < minutes_away < WINDOW_MIN and not already:
-            # Window has closed, game hasn't started — snapshot was missed
             missed_games.append(game)
 
     for game in missed_games:
         log_missed(game, now)
 
     if not in_window:
-        # Show when the next window opens
-        future = [g for g in all_games if (g["start_dt"] - now).total_seconds() / 60 > WINDOW_MIN]
+        future = [g for g in all_games if (g["start_utc"] - now).total_seconds() / 60 > WINDOW_MIN]
         if future:
-            next_game  = min(future, key=lambda g: g["start_dt"])
-            mins_left  = (next_game["start_dt"] - now).total_seconds() / 60 - WINDOW_MAX
-            log(f"  No games in window. Next window opens in {mins_left:.0f} min ({next_game['event_ticker']})")
+            next_game = min(future, key=lambda g: g["start_utc"])
+            mins_left = (next_game["start_utc"] - now).total_seconds() / 60 - WINDOW_MAX
+            log(f"  No games in window. Next window opens in {mins_left:.0f} min "
+                f"({next_game['event_ticker']})")
         else:
             log("  No upcoming games outside current window.")
         return
 
-    # Fire one snapshot (captures all current open markets at once)
     log(f"  Triggering snapshot for {len(in_window)} game(s) in window...")
     if run_snapshot():
         snap_ts = now.strftime("%Y-%m-%d %H:%M UTC")
         for game in in_window:
-            hours_before = (game["start_dt"] - now).total_seconds() / 3600
+            hours_before = (game["start_utc"] - now).total_seconds() / 3600
             log(
                 f"  TIMING: {game['event_ticker']} | "
-                f"game_start_utc={game['start_dt'].strftime('%Y-%m-%d %H:%M UTC')} | "
+                f"game_start_utc={game['start_utc'].strftime('%Y-%m-%d %H:%M UTC')} | "
                 f"snapshot_taken_utc={snap_ts} | "
                 f"hours_before_game={hours_before:.2f}h"
             )

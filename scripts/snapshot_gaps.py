@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from core.utils import remove_vig
+from core.utils import remove_vig, ticker_to_utc
 
 KALSHI_BASE = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 ODDS_BASE   = os.getenv("ODDS_API_BASE",   "https://api.theoddsapi.com")
@@ -186,15 +186,17 @@ def build_rows(sport: str) -> list[dict]:
 
             # Flag any side where the gap is large enough in either direction
             # gap < 0 → Kalshi underprices (BUY_YES)   gap > 0 → Kalshi overprices (BUY_NO)
-            fav_flag = abs(gap) >= GAP_THRESHOLD
-            signal   = "BUY_YES" if gap < 0 else "BUY_NO"
+            fav_flag  = abs(gap) >= GAP_THRESHOLD
+            signal    = "BUY_YES" if gap < 0 else "BUY_NO"
+            _start    = ticker_to_utc(s.get("event_ticker", ""))
+            start_utc = _start.strftime("%Y-%m-%dT%H:%M:%SZ") if _start else s.get("occurrence_datetime", "")
 
             rows.append({
                 "sport":          sport.upper(),
                 "game":           f"{away_v} @ {home_v}",
                 "team":           vs_name,
                 "side":           "HOME" if is_home else "AWAY",
-                "start_utc":      s.get("occurrence_datetime", ""),
+                "start_utc":      start_utc,
                 "kalshi_ticker":  s["ticker"],
                 "event_ticker":   s["event_ticker"],
                 "k_prob":         round(k_prob, 4),
