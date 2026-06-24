@@ -510,7 +510,11 @@ with tab2:
             "Game Start": df["start_utc"].apply(fmt_game_time) if "start_utc" in df.columns else "—",
             "Snap Date":  df["snapshot_time"].apply(_fmt_snap_date),
             "Game":       df["game"],
-            "Signal":     df["signal"],
+            "Signal":     df.apply(
+                              lambda r: f"YES · {r['team']}" if r.get("signal") == "BUY_YES"
+                                        else (f"NO · {r['team']}" if r.get("signal") == "BUY_NO" else r.get("signal", "—")),
+                              axis=1,
+                          ),
             "Gap":        df["abs_gap"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),
             "Tier":       df["abs_gap"].apply(lambda v: 1 if pd.notna(v) and v >= 0.10 else 2) if "abs_gap" in df.columns else "—",
             "Kalshi":     df["k_prob"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),
