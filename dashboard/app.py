@@ -465,9 +465,24 @@ with tab2:
         agent_col      = df["agent_verdict"]      if "agent_verdict"      in df.columns else pd.Series(["—"] * len(df), index=df.index)
         confidence_col = df["agent_confidence"]   if "agent_confidence"   in df.columns else pd.Series(["—"] * len(df), index=df.index)
 
+        def _fmt_game_date(utc_str):
+            try:
+                dt = datetime.fromisoformat(str(utc_str).replace("Z", "+00:00"))
+                return dt.astimezone(ET).strftime("%b %-d")
+            except Exception:
+                return "—"
+
+        def _fmt_snap_date(snap_str):
+            try:
+                dt = datetime.strptime(str(snap_str), "%Y-%m-%d_%H%M").replace(tzinfo=timezone.utc)
+                return dt.astimezone(ET).strftime("%b %-d")
+            except Exception:
+                return _fmt_date(str(snap_str)[:10])
+
         display = pd.DataFrame({
             "ID":         df["trade_id"].apply(_short_id),
-            "Date":       df["snapshot_time"].apply(lambda s: _fmt_date(str(s)[:10])),
+            "Game Date":  df["start_utc"].apply(_fmt_game_date) if "start_utc" in df.columns else "—",
+            "Snap Date":  df["snapshot_time"].apply(_fmt_snap_date),
             "Game":       df["game"],
             "Signal":     df["signal"],
             "Gap":        df["abs_gap"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),

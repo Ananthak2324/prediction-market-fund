@@ -34,6 +34,8 @@ from scipy.stats import binomtest
 
 load_dotenv()
 
+from core.utils import ticker_to_utc
+
 try:
     from agent.research_agent import run as _agent_run
     _AGENT_AVAILABLE = True
@@ -183,17 +185,23 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
 
             event_ticker = row.get("event_ticker", "")
 
-            # Filter out in-game snapshots: snapshot must be BEFORE game start
-            start_str = row.get("start_utc", "")
-            try:
-                start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                continue
+            # Derive accurate game start from ticker (Kalshi occurrence_datetime
+            # has a known 3-hour UTC/ET error; the ticker encodes ET time correctly)
+            start_dt = ticker_to_utc(event_ticker)
+            if start_dt is None:
+                # Fallback: use stored start_utc if ticker can't be parsed
+                start_str = row.get("start_utc", "")
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    continue
+
+            start_str = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
             if snap_dt >= start_dt:
                 continue  # snapshot taken after game started — in-game price, skip
 
-            hours_before = (start_dt - snap_dt).total_seconds() / 3600
+            hours_before   = (start_dt - snap_dt).total_seconds() / 3600
             timing_suspect = hours_before > 3.0
 
             new_signal = row.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")

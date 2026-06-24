@@ -1,33 +1,33 @@
 {
   "total_logged": 14,
-  "total_resolved": 5,
-  "total_valid": 5,
-  "total_valid_wins": 3,
-  "total_excluded": 0,
-  "total_open": 9,
+  "total_resolved": 6,
+  "total_valid": 2,
+  "total_valid_wins": 2,
+  "total_excluded": 4,
+  "total_open": 8,
   "primary_metric": "clean_trades",
   "clean_trades": {
-    "resolved": 4,
-    "wins": 2,
-    "losses": 2,
-    "win_rate": 0.5,
+    "resolved": 0,
+    "wins": 0,
+    "losses": 0,
+    "win_rate": null,
     "open": 0,
     "p_value": null
   },
   "suspect_trades": {
-    "resolved": 1,
-    "wins": 1,
+    "resolved": 2,
+    "wins": 2,
     "losses": 0,
     "win_rate": 1.0,
-    "open": 9,
+    "open": 8,
     "p_value": null
   },
-  "win_rate_overall": 0.6,
+  "win_rate_overall": 1.0,
   "win_rate_tier1": 0.5,
-  "win_rate_tier2": 0.6667,
-  "avg_gap_winners": 0.1306,
-  "avg_gap_losers": 0.132,
-  "p_value": 0.5,
+  "win_rate_tier2": 0.75,
+  "avg_gap_winners": 0.1197,
+  "avg_gap_losers": 0.1395,
+  "p_value": null,
   "by_gap_bucket": {
     "5_7": {
       "trades": 1,
@@ -38,7 +38,7 @@
       "win_rate": 0.5
     },
     "7_10": {
-      "trades": 1,
+      "trades": 2,
       "win_rate": 1.0
     },
     "10_15": {
@@ -48,12 +48,47 @@
   },
   "by_book": {
     "pinnacle": {
-      "trades": 5,
-      "win_rate": 0.6
+      "trades": 6,
+      "win_rate": 0.6667
     }
   },
-  "excluded_trades": [],
-  "last_updated": "2026-06-24T03:43:52.436044+00:00",
+  "excluded_trades": [
+    {
+      "team": "Texas Rangers",
+      "game": "Texas Rangers @ Miami Marlins",
+      "signal": "BUY_NO",
+      "gap": 0.1652,
+      "outcome": "LOSS",
+      "replacement_flags": [
+        "SIGNAL_FLIP"
+      ]
+    },
+    {
+      "team": "San Diego Padres",
+      "game": "Atlanta Braves @ San Diego Padres",
+      "signal": "BUY_YES",
+      "gap": -0.0773,
+      "outcome": "WIN",
+      "replacement_flags": []
+    },
+    {
+      "team": "Colorado Rockies",
+      "game": "Boston Red Sox @ Colorado Rockies",
+      "signal": "BUY_YES",
+      "gap": -0.2542,
+      "outcome": "WIN",
+      "replacement_flags": []
+    },
+    {
+      "team": "New York Mets",
+      "game": "Chicago Cubs @ New York Mets",
+      "signal": "BUY_YES",
+      "gap": -0.1137,
+      "outcome": "LOSS",
+      "replacement_flags": []
+    }
+  ],
+  "last_updated": "2026-06-24T15:44:22.952000+00:00",
   "agent_stats": {
     "total_evaluated": 0,
     "trade_recommendations": 0,
@@ -61,7 +96,7 @@
     "skip_recommendations": 0,
     "skip_rate": null,
     "win_rate_after_agent": null,
-    "win_rate_without_agent": 0.6,
+    "win_rate_without_agent": 0.6667,
     "news_found_rate": null,
     "pinnacle_unstable_rate": null,
     "high_confidence_win_rate": null,
