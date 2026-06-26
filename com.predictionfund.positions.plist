@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.predictionfund.positions</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
+    <string>-u</string>
+    <string>/Users/ananthan/Desktop/Prediction Market Fund/execution/position_manager.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund</string>
+
+  <!-- Start when loaded and restart automatically if it crashes -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Log stdout and stderr -->
+  <key>StandardOutPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/positions_out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/positions_err.log</string>
+
+  <!-- Load environment variables -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+</dict>
+</plist>

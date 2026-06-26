@@ -347,7 +347,8 @@ with tab1:
     if not all_recent_rows:
         st.info("No snapshots yet. Scheduler fires 2h before first pitch.")
     else:
-        now_utc = datetime.now(timezone.utc)
+        now_utc      = datetime.now(timezone.utc)
+        today_et_date = now_utc.astimezone(ET).date()
 
         records = []
         for row in all_recent_rows:
@@ -365,6 +366,14 @@ with tab1:
             # Skip games that have already started
             if hours is not None and hours < 0:
                 continue
+
+            # Skip games not starting today (ET date)
+            if hours is not None:
+                try:
+                    if game_dt.astimezone(ET).date() != today_et_date:
+                        continue
+                except Exception:
+                    pass
 
             if abs_gap >= 0.05 and tier == 1:
                 action = "TRADE ✓"
@@ -804,6 +813,58 @@ with tab4:
             (sc6, "Open Positions", f"<span class='teal'>{len(sb_open)}</span>", "&nbsp;"),
         ]
         for col, label, val, sub in _sb_cards:
+            with col:
+                st.markdown(f"""
+                <div class="mcard">
+                  <div class="mlabel">{label}</div>
+                  <div class="mval">{val}</div>
+                  <div class="msub">{sub}</div>
+                </div>""", unsafe_allow_html=True)
+
+        # ── ROW 2: Risk metric cards (Sharpe, Max Drawdown) ───────────────────
+        import statistics as _stats_sb
+
+        _sb_sharpe    = None
+        _sb_max_dd    = None
+        _closed_rets  = [t.get("pnl_pct") for t in sb_closed if t.get("pnl_pct") is not None]
+        if len(_closed_rets) >= 2:
+            _mean_r = sum(_closed_rets) / len(_closed_rets)
+            _std_r  = _stats_sb.stdev(_closed_rets)
+            _sb_sharpe = round(_mean_r / _std_r, 3) if _std_r > 0 else None
+
+        if sb_history:
+            _bks  = [r.get("bankroll") for r in sb_history if r.get("bankroll") is not None]
+            if _bks:
+                _peak, _max_dd_val = _bks[0], 0.0
+                for _b in _bks:
+                    _peak = max(_peak, _b)
+                    _dd   = (_peak - _b) / _peak if _peak > 0 else 0.0
+                    _max_dd_val = max(_max_dd_val, _dd)
+                _sb_max_dd = round(_max_dd_val, 4)
+
+        _n_closed       = len(sb_closed)
+        _need_more      = _n_closed < 5
+        _sharpe_val_str = (
+            "<span class='gray'>N/A (&lt;5 trades)</span>" if _need_more
+            else (
+                f"<span class='{'teal' if _sb_sharpe and _sb_sharpe > 0 else 'red'}'>{_sb_sharpe:.3f}</span>"
+                if _sb_sharpe is not None else "<span class='gray'>—</span>"
+            )
+        )
+        _dd_val_str = (
+            "<span class='gray'>N/A (&lt;5 trades)</span>" if _need_more
+            else (
+                f"<span class='{'teal' if _sb_max_dd is not None and _sb_max_dd < 0.15 else 'red'}'>"
+                f"{_sb_max_dd * 100:.1f}%</span>"
+                if _sb_max_dd is not None else "<span class='gray'>—</span>"
+            )
+        )
+        _r2c1, _r2c2, _ = st.columns([1, 1, 4])
+        _r2_cards = [
+            (_r2c1, "Sharpe Ratio",   _sharpe_val_str, f"{_n_closed} closed trade(s)"),
+            (_r2c2, "Max Drawdown",   _dd_val_str,     "peak-to-trough"),
+        ]
+        for col, label, val, sub in _r2_cards:
             with col:
                 st.markdown(f"""
                 <div class="mcard">

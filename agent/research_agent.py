@@ -72,9 +72,7 @@ SIGNALS THAT MEAN THE GAP IS BEHAVIORAL — TRADE:
 - Public narrative favors underdog (recent winning streak, nationally televised game, popular team)
 - Home team overpriced by Kalshi retail crowd
 
-Always weight information signals above behavioral signals. One confirmed injury to a starter overrides any number of behavioral signals pointing to TRADE.
-
-Respond ONLY with a valid JSON object. No preamble, no explanation outside the JSON, no markdown backticks."""
+Always weight information signals above behavioral signals. One confirmed injury to a starter overrides any number of behavioral signals pointing to TRADE."""
 
 # Cached system prompt format — cuts input cost 90% after the first call
 _CACHED_SYSTEM = [
@@ -84,6 +82,35 @@ _CACHED_SYSTEM = [
         "cache_control": {"type": "ephemeral"},
     }
 ]
+
+
+# Sent as the second user turn after search results are in context
+_VERDICT_PROMPT = (
+    "Based on the search results above and all game context provided, apply the decision "
+    "rules from your system prompt and return ONLY this JSON object "
+    "(no preamble, no markdown fences):\n"
+    "{\n"
+    '  "news_found":          true or false,\n'
+    '  "news_detail":         "specific finding or null",\n'
+    '  "news_source":         "url or null",\n'
+    '  "pitcher_confirmed":   true or false or null,\n'
+    '  "weather_issue":       true or false,\n'
+    '  "pinnacle_stable":     true or false,\n'
+    '  "pinnacle_movement":   float or null,\n'
+    '  "gap_type":            "BEHAVIORAL" or "INFORMATIONAL",\n'
+    '  "confidence":          "HIGH" or "MEDIUM" or "LOW",\n'
+    '  "recommendation":      "TRADE" or "SKIP" or "MONITOR",\n'
+    '  "reasoning":           "2-3 sentence plain English explanation",\n'
+    '  "gap_explanation":     "one sentence explaining why the gap exists"\n'
+    "}\n\n"
+    "DECISION RULES (follow exactly):\n"
+    "  SKIP   — any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
+    "  HIGH confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
+    "weather_issue=false, abs_gap >= 0.10, tier == 1\n"
+    "  MEDIUM confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
+    "weather_issue=false, abs_gap >= 0.05, tier == 2\n"
+    "  MONITOR — everything else that is not SKIP"
+)
 
 
 # ── Pinnacle stability check ───────────────────────────────────────────────────
@@ -250,15 +277,13 @@ def _build_user_message(
             f"(now {current_pinnacle:.1%})."
         )
 
-    pin_movement_json = pinnacle_movement if pinnacle_movement is not None else "null"
-
     # Single combined search query (Fix 2 — was 4 separate queries)
     search_query = (
         f"{home} {away} starting pitcher lineup injury scratch {date}"
     )
 
     return (
-        f"Analyze this {sport} prediction market gap and return a research verdict.\n\n"
+        f"Analyze this {sport} prediction market gap.\n\n"
         f"Game:   {away} @ {home}\n"
         f"Date:   {date}  ({game_time})\n"
         f"Signal: {signal}\n"
@@ -270,33 +295,10 @@ def _build_user_message(
         f"{pin_note}"
         f"{timing_note}"
         f"{large_gap_note}\n\n"
-        f"Run exactly ONE web search using this query:\n"
+        f"Search for current news using this query:\n"
         f'  "{search_query}"\n\n'
-        f"If the search returns no relevant results, set news_found=false and note "
-        f"\"No news found\" in reasoning. Do not run additional searches.\n\n"
-        f"After searching, apply the decision rules from your system prompt and return ONLY "
-        f"this JSON object (no preamble, no markdown fences):\n"
-        f"{{\n"
-        f'  "news_found":          true or false,\n'
-        f'  "news_detail":         "specific finding or null",\n'
-        f'  "news_source":         "url or null",\n'
-        f'  "pitcher_confirmed":   true or false or null,\n'
-        f'  "weather_issue":       true or false,\n'
-        f'  "pinnacle_stable":     {str(pinnacle_stable).lower()},\n'
-        f'  "pinnacle_movement":   {pin_movement_json},\n'
-        f'  "gap_type":            "BEHAVIORAL" or "INFORMATIONAL",\n'
-        f'  "confidence":          "HIGH" or "MEDIUM" or "LOW",\n'
-        f'  "recommendation":      "TRADE" or "SKIP" or "MONITOR",\n'
-        f'  "reasoning":           "2-3 sentence plain English explanation",\n'
-        f'  "gap_explanation":     "one sentence explaining why the gap exists"\n'
-        f"}}\n\n"
-        f"DECISION RULES (follow exactly):\n"
-        f"  SKIP   — any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
-        f"  HIGH confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-        f"weather_issue=false, abs_gap >= 0.10, tier == 1\n"
-        f"  MEDIUM confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-        f"weather_issue=false, abs_gap >= 0.05, tier == 2\n"
-        f"  MONITOR — everything else that is not SKIP"
+        f"Report what you find about starting pitchers, injuries, lineup changes, or weather. "
+        f"If nothing relevant is found, note that explicitly."
     )
 
 
@@ -422,39 +424,42 @@ def run(game_dict: dict) -> dict:
         f"{game_dict.get('away_team', '?')} @ {game_dict.get('home_team', '?')}"
     )
 
-    def _make_api_call(msgs: list, max_tok: int = 2048):
-        return client.beta.messages.create(
+    def _make_api_call(msgs: list, max_tok: int = 2048, force_tool: bool = False):
+        kwargs: dict = dict(
             model=MODEL,
             max_tokens=max_tok,
-            system=_CACHED_SYSTEM,          # Fix 1 — cached system prompt
+            system=_CACHED_SYSTEM,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=msgs,
             betas=["web-search-2025-03-05"],
         )
+        if force_tool:
+            kwargs["tool_choice"] = {"type": "any"}
+        return client.beta.messages.create(**kwargs)
+
+    def _accumulate(resp) -> None:
+        nonlocal total_input, total_output, total_cache, total_searches
+        u = resp.usage
+        total_input   += getattr(u, "input_tokens",  0)
+        total_output  += getattr(u, "output_tokens", 0)
+        total_cache   += getattr(u, "cache_read_input_tokens", 0)
+        total_searches += sum(
+            1 for b in resp.content
+            if getattr(b, "type", "") == "tool_use"
+            and getattr(b, "name", "") == "web_search"
+        )
 
     try:
-        response = _make_api_call(messages)
+        # Turn 1: force web_search, collect results
+        response = _make_api_call(messages, force_tool=True)
 
-        # Agentic loop — truncate search results (Fix 3) before they re-enter context
+        # Agentic loop — process search tool calls and truncate results
         for _ in range(8):
             if response.stop_reason != "tool_use":
                 break
-
-            # Accumulate usage and search call count for this turn
-            u = response.usage
-            total_input  += getattr(u, "input_tokens",  0)
-            total_output += getattr(u, "output_tokens", 0)
-            total_cache  += getattr(u, "cache_read_input_tokens", 0)
-            total_searches += sum(
-                1 for b in response.content
-                if getattr(b, "type", "") == "tool_use"
-                and getattr(b, "name", "") == "web_search"
-            )
-
-            # Truncate search result blocks before they go back into context
+            _accumulate(response)
             truncated = _truncate_content_blocks(response.content)
             messages.append({"role": "assistant", "content": truncated})
-
             tool_results = [
                 {"type": "tool_result", "tool_use_id": b.id, "content": []}
                 for b in response.content
@@ -463,16 +468,14 @@ def run(game_dict: dict) -> dict:
             messages.append({"role": "user", "content": tool_results})
             response = _make_api_call(messages)
 
-        # Final turn usage
-        u = response.usage
-        total_input  += getattr(u, "input_tokens",  0)
-        total_output += getattr(u, "output_tokens", 0)
-        total_cache  += getattr(u, "cache_read_input_tokens", 0)
-        total_searches += sum(
-            1 for b in response.content
-            if getattr(b, "type", "") == "tool_use"
-            and getattr(b, "name", "") == "web_search"
-        )
+        # Accumulate usage for whatever the loop exited on
+        _accumulate(response)
+
+        # Turn 2: search results are now in context — ask for JSON verdict
+        messages.append({"role": "assistant", "content": _truncate_content_blocks(response.content)})
+        messages.append({"role": "user", "content": _VERDICT_PROMPT})
+        response = _make_api_call(messages)
+        _accumulate(response)
 
         raw_text = "".join(getattr(b, "text", "") for b in response.content)
         verdict  = _parse_verdict(raw_text)
@@ -485,10 +488,7 @@ def run(game_dict: dict) -> dict:
                 "content": "Your response was not valid JSON. Return ONLY the JSON object, no other text.",
             })
             retry = _make_api_call(messages, max_tok=1024)
-            u = retry.usage
-            total_input  += getattr(u, "input_tokens",  0)
-            total_output += getattr(u, "output_tokens", 0)
-            total_cache  += getattr(u, "cache_read_input_tokens", 0)
+            _accumulate(retry)
             retry_text = "".join(getattr(b, "text", "") for b in retry.content)
             verdict = _parse_verdict(retry_text)
 

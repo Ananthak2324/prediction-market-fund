@@ -67,7 +67,8 @@ def save_trades(trades: list[dict], dry_run: bool = False) -> None:
         json.dump(trades, f, indent=2)
 
 
-GAP_THRESHOLD = 0.05
+GAP_THRESHOLD    = 0.05
+SPREAD_THRESHOLD = 0.06  # max acceptable Kalshi bid-ask spread; wider = illiquid, skip
 
 
 # ── agent helpers ─────────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ def _append_skipped(trade: dict, verdict: dict) -> None:
     """Log a SKIP decision to skipped_trades.json (never appears in paper_trades)."""
     record = {
         k: trade.get(k)
-        for k in ("trade_id", "game", "team", "signal", "gap", "abs_gap",
+        for k in ("trade_id", "event_ticker", "kalshi_ticker", "game", "team", "signal", "gap", "abs_gap",
                   "start_utc", "snapshot_time", "hours_before_game", "timing_suspect")
     }
     record.update({
@@ -161,6 +162,22 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
     new_count = 0
     replaced_count = 0
     skipped_count = 0
+
+    # Load previously-skipped tickers so we don't re-evaluate the same game on every run
+    previously_skipped: set[str] = set()
+    try:
+        with open(SKIPPED_FILE) as f:
+            for entry in json.load(f):
+                et = entry.get("event_ticker", "")
+                if not et:
+                    # Older records: extract from trade_id format "SNAP_TIME|EVENT_TICKER"
+                    tid = entry.get("trade_id", "")
+                    et = tid.split("|", 1)[1] if "|" in tid else ""
+                if et:
+                    previously_skipped.add(et)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    this_run_skipped: set[str] = set()
 
     for snap_file in sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "*.json"))):
         if os.path.basename(snap_file) in ("master_log.json", "missed_snapshots.json"):
@@ -206,6 +223,14 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
 
             new_signal = row.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")
 
+            k_bid  = row.get("k_bid")
+            k_ask  = row.get("k_ask")
+            spread = round(k_ask - k_bid, 3) if (k_bid is not None and k_ask is not None) else None
+
+            # Skip wide-spread markets — mid-price is unreliable when spread > threshold
+            if spread is not None and spread > SPREAD_THRESHOLD:
+                continue
+
             trade = {
                 "trade_id":           f"{snap_time_str}|{event_ticker}",
                 "snapshot_time":      snap_time_str,
@@ -218,6 +243,9 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                 "kalshi_ticker":      row.get("kalshi_ticker", ""),
                 "event_ticker":       event_ticker,
                 "k_prob":             row.get("k_prob"),
+                "k_bid":              k_bid,
+                "k_ask":              k_ask,
+                "spread":             spread,
                 "v_prob":             row.get("v_prob"),
                 "gap":                row.get("gap"),
                 "abs_gap":            row.get("abs_gap"),
@@ -234,6 +262,11 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
             }
 
             if event_ticker not in event_index:
+                # Skip agent call if already confidently rejected for this game
+                if event_ticker in previously_skipped or event_ticker in this_run_skipped:
+                    skipped_count += 1
+                    continue
+
                 # Run agent before logging — it is the barrier between detection and execution
                 if _AGENT_AVAILABLE:
                     verdict = _agent_run(_build_agent_game_dict(trade))
@@ -243,6 +276,7 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                     if rec == "SKIP":
                         _append_skipped(trade, verdict)
                         skipped_count += 1
+                        this_run_skipped.add(event_ticker)
                         continue  # Do not log to paper_trades
                 else:
                     trade["agent_verdict"] = None
@@ -395,6 +429,59 @@ def resolve_trades(trades: list[dict], dry_run: bool = False) -> tuple[int, int]
     return resolved, still_open
 
 
+def resolve_skipped_trades() -> int:
+    """
+    For each skipped trade that has kalshi_ticker and no shadow_outcome yet,
+    fetch the Kalshi result and record what would have happened.
+    Returns count of shadow outcomes written.
+    """
+    if not os.path.exists(SKIPPED_FILE):
+        return 0
+    try:
+        with open(SKIPPED_FILE) as f:
+            skipped = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return 0
+
+    resolved = 0
+    for entry in skipped:
+        if entry.get("shadow_outcome"):
+            continue
+        ticker = entry.get("kalshi_ticker", "")
+        if not ticker:
+            continue
+        start = entry.get("start_utc", "")
+        if not start:
+            continue
+        try:
+            start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < start_dt + timedelta(hours=RESOLVE_AFTER):
+                continue
+        except ValueError:
+            continue
+
+        kalshi = fetch_kalshi_result(ticker)
+        time.sleep(0.15)
+        if kalshi is None or kalshi["status"] != "finalized":
+            continue
+
+        kalshi_yes = (kalshi["result"] == "yes")
+        signal     = entry.get("signal", "BUY_YES")
+        won        = kalshi_yes if signal != "BUY_NO" else not kalshi_yes
+
+        entry["shadow_outcome"]     = "WIN" if won else "LOSS"
+        entry["shadow_correct"]     = won
+        entry["shadow_resolved_at"] = kalshi["settlement_ts"]
+        resolved += 1
+
+    if resolved:
+        with open(SKIPPED_FILE, "w") as f:
+            json.dump(skipped, f, indent=2)
+        print(f"  [SHADOW] Resolved {resolved} skipped trade(s) — shadow outcomes written.")
+
+    return resolved
+
+
 # ── performance summary ───────────────────────────────────────────────────────
 
 def _build_agent_stats(trades: list[dict]) -> dict:
@@ -438,6 +525,11 @@ def _build_agent_stats(trades: list[dict]) -> dict:
     wr_high   = round(sum(1 for t in high_res if t["outcome"] == "WIN") / len(high_res), 4) if high_res else None
     wr_med    = round(sum(1 for t in med_res  if t["outcome"] == "WIN") / len(med_res),  4) if med_res  else None
 
+    # Shadow portfolio — what would have happened if we had taken the skipped trades
+    shadow_resolved = [s for s in skipped if s.get("shadow_outcome")]
+    shadow_wins     = [s for s in shadow_resolved if s["shadow_outcome"] == "WIN"]
+    shadow_wr       = round(len(shadow_wins) / len(shadow_resolved), 4) if shadow_resolved else None
+
     return {
         "total_evaluated":          total_eval,
         "trade_recommendations":    len(trade_rec),
@@ -450,6 +542,103 @@ def _build_agent_stats(trades: list[dict]) -> dict:
         "pinnacle_unstable_rate":   pu_rate,
         "high_confidence_win_rate": wr_high,
         "medium_confidence_win_rate": wr_med,
+        "shadow_resolved":          len(shadow_resolved),
+        "shadow_win_rate":          shadow_wr,
+    }
+
+
+def _build_portfolio_metrics(trades: list[dict]) -> dict:
+    """Compute EV per trade (paper trades) and Sharpe/drawdown (sandbox DB)."""
+    import sqlite3 as _sqlite3
+    import statistics as _stats
+
+    # ── Expected value from paper trades ─────────────────────────────────────
+    valid_res = [
+        t for t in trades
+        if t.get("valid_for_analysis", True)
+        and t.get("outcome") is not None
+        and t.get("k_prob") is not None
+    ]
+    ev_values: list[float] = []
+    for t in valid_res:
+        k = t["k_prob"]
+        win_rate = 1.0 if t["outcome"] == "WIN" else 0.0
+        if k <= 0 or k >= 1:
+            continue
+        payout_ratio = (1.0 - k) / k
+        ev = win_rate * payout_ratio - (1.0 - win_rate)
+        ev_values.append(ev)
+
+    avg_ev = round(sum(ev_values) / len(ev_values), 4) if ev_values else None
+
+    # EV by gap bucket
+    ev_by_bucket: dict[str, dict] = {}
+    for t in valid_res:
+        k = t.get("k_prob")
+        if k is None or k <= 0 or k >= 1:
+            continue
+        b   = gap_bucket(t.get("abs_gap", 0))
+        wr  = 1.0 if t["outcome"] == "WIN" else 0.0
+        ev  = wr * (1 - k) / k - (1 - wr)
+        ev_by_bucket.setdefault(b, []).append(ev)
+    ev_by_bucket_avg = {b: round(sum(v) / len(v), 4) for b, v in ev_by_bucket.items()}
+
+    # ── Sandbox metrics from SQLite ───────────────────────────────────────────
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "data", "paper_trades.db")
+    sharpe = max_drawdown = total_return_pct = None
+    n_closed = 0
+
+    try:
+        conn = _sqlite3.connect(db_path)
+        conn.row_factory = _sqlite3.Row
+
+        closed = conn.execute(
+            "SELECT pnl_pct, actual_cost FROM sandbox_trades WHERE status='CLOSED' ORDER BY exit_time"
+        ).fetchall()
+        n_closed = len(closed)
+
+        if n_closed >= 2:
+            returns = [r["pnl_pct"] for r in closed if r["pnl_pct"] is not None]
+            if len(returns) >= 2:
+                mean_r = sum(returns) / len(returns)
+                std_r  = _stats.stdev(returns)
+                sharpe = round(mean_r / std_r, 3) if std_r > 0 else None
+
+        # Max drawdown from bankroll history
+        history = conn.execute(
+            "SELECT bankroll FROM sandbox_bankroll_history ORDER BY timestamp"
+        ).fetchall()
+        if history:
+            bankrolls   = [r["bankroll"] for r in history]
+            peak        = bankrolls[0]
+            max_dd      = 0.0
+            for b in bankrolls:
+                peak = max(peak, b)
+                dd   = (peak - b) / peak if peak > 0 else 0.0
+                max_dd = max(max_dd, dd)
+            max_drawdown = round(max_dd, 4)
+
+        # Total return
+        cfg = conn.execute("SELECT bankroll_start FROM sandbox_config WHERE id=1").fetchone()
+        if cfg:
+            latest = conn.execute(
+                "SELECT bankroll FROM sandbox_bankroll_history ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            if latest:
+                total_return_pct = round((latest["bankroll"] - cfg["bankroll_start"]) / cfg["bankroll_start"], 4)
+
+        conn.close()
+    except Exception:
+        pass
+
+    return {
+        "avg_ev_per_trade":   avg_ev,
+        "ev_by_gap_bucket":   ev_by_bucket_avg,
+        "sandbox_sharpe":     sharpe,
+        "sandbox_max_drawdown": max_drawdown,
+        "sandbox_total_return_pct": total_return_pct,
+        "sandbox_closed_trades": n_closed,
     }
 
 
@@ -574,6 +763,7 @@ def build_summary(trades: list[dict]) -> dict:
         ],
         "last_updated":        datetime.now(timezone.utc).isoformat(),
         "agent_stats":         _build_agent_stats(trades),
+        "portfolio_metrics":   _build_portfolio_metrics(trades),
     }
 
 
@@ -643,6 +833,12 @@ def print_summary(trades: list[dict], summary: dict) -> None:
     print(f"  Win rate (valid) : {wr:.1%}  ({n_valid_wins}/{n_valid}){sig}{excl_note}")
     if pv is not None:
         print(f"  p-value vs 50%   : {pv:.4f}")
+
+    pm = summary.get("portfolio_metrics", {})
+    avg_ev = pm.get("avg_ev_per_trade")
+    if avg_ev is not None:
+        ev_sign = "+" if avg_ev >= 0 else ""
+        print(f"  Avg EV per trade : {ev_sign}{avg_ev:.4f}  ({ev_sign}{avg_ev*100:.2f}¢ per $1 risked)")
     print()
 
     # Excluded trades (signal flipped or gap closed by 2h snapshot)
@@ -740,8 +936,12 @@ def main() -> None:
     print(f"Ingested {new_count} new trade(s) from snapshots.  Skipped by agent: {skipped_count}")
     print(f"Total trades: {len(trades)}  |  Open: {sum(1 for t in trades if t['outcome'] is None)}")
 
-    # 2. Resolve eligible open trades
+    # 2. Resolve eligible open trades + shadow-resolve skipped trades
     resolved, still_open = resolve_trades(trades, dry_run=args.dry_run)
+    if not args.dry_run:
+        shadow_count = resolve_skipped_trades()
+        if shadow_count:
+            print(f"Shadow-resolved {shadow_count} skipped trade(s).")
     print(f"Resolved: {resolved}  |  Still pending (game not finished): {still_open}")
 
     # 3. Save trades

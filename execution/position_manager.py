@@ -392,12 +392,17 @@ def settle_resolved_positions(paper_trades: list[dict]) -> int:
 if __name__ == "__main__":
     init_db()
     print("[SANDBOX] Poll loop started — checking every 60s during 12PM–11PM ET")
+    last_outside_hour = None
     while True:
         now_et = datetime.now(ET)
         if 12 <= now_et.hour < 23:
+            last_outside_hour = None
             n = poll_open_positions()
             if n:
                 print(f"[SANDBOX] Closed {n} position(s) this cycle.")
         else:
-            print(f"[SANDBOX] Outside game hours ({now_et.strftime('%H:%M ET')}) — sleeping.")
+            hour_key = now_et.strftime('%Y-%m-%d-%H')
+            if last_outside_hour != hour_key:
+                print(f"[SANDBOX] Outside game hours ({now_et.strftime('%H:%M ET')}) — sleeping.")
+                last_outside_hour = hour_key
         time.sleep(60)

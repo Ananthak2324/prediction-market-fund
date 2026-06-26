@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -190,6 +191,10 @@ def build_rows(sport: str) -> list[dict]:
             signal    = "BUY_YES" if gap < 0 else "BUY_NO"
             _start    = ticker_to_utc(s.get("event_ticker", ""))
             start_utc = _start.strftime("%Y-%m-%dT%H:%M:%SZ") if _start else s.get("occurrence_datetime", "")
+
+            # Skip games not starting today (ET date)
+            if _start and _start.astimezone(ZoneInfo("America/New_York")).date() != datetime.now(ZoneInfo("America/New_York")).date():
+                continue
 
             rows.append({
                 "sport":          sport.upper(),
