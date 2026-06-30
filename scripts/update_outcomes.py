@@ -38,10 +38,11 @@ from core.utils import ticker_to_utc
 from core.notifications import send_imessage
 
 try:
-    from agent.research_agent import run as _agent_run
+    from agent.research_agent import run as _agent_run, TIER1_MIN_GAP
     _AGENT_AVAILABLE = True
 except Exception:
     _AGENT_AVAILABLE = False
+    TIER1_MIN_GAP = 0.10
 
 KALSHI_BASE    = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 SNAPSHOT_DIR   = "data/snapshots"
@@ -80,7 +81,7 @@ def _build_agent_game_dict(trade: dict) -> dict:
     away  = parts[0].strip() if len(parts) == 2 else ""
     home  = parts[1].strip() if len(parts) == 2 else ""
     abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
-    tier    = 1 if abs_gap >= 0.10 else 2
+    tier    = 1 if abs_gap >= TIER1_MIN_GAP else 2
     start   = trade.get("start_utc", "")
     return {
         "home_team":         home,
@@ -122,7 +123,7 @@ def _agent_fields(verdict: dict) -> dict:
 
 def _format_trade_entry_message(trade: dict) -> str:
     abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
-    tier    = 1 if abs_gap >= 0.10 else 2
+    tier    = 1 if abs_gap >= TIER1_MIN_GAP else 2
     k_prob  = trade.get("k_prob") or 0
     v_prob  = trade.get("v_prob") or 0
     gap     = trade.get("gap") or 0

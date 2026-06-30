@@ -1,0 +1,37 @@
+{
+  "period_start": "2026-06-23",
+  "period_end": "2026-06-30",
+  "generated_at": "2026-06-30T02:18:54.877507+00:00",
+  "taken": {
+    "total": 12,
+    "resolved": 12,
+    "wins": 10,
+    "losses": 2,
+    "open": 0,
+    "win_rate": 0.8333
+  },
+  "skipped": {
+    "total": 60,
+    "resolved": 60,
+    "wins": 33,
+    "losses": 27,
+    "pending": 0,
+    "win_rate": 0.55,
+    "by_trigger": {
+      "news_found": 60,
+      "pinnacle_unstable": 41,
+      "weather_issue": 0
+    }
+  },
+  "weekly_cost_usd": 0.7859,
+  "thresholds_at_audit_time": {
+    "pinnacle_movement_threshold": 0.03,
+    "large_gap_warn": 0.2,
+    "tier1_min_gap": 0.1,
+    "tier2_min_gap": 0.05
+  },
+  "thresholds_file": "/Users/ananthan/Desktop/Prediction Market Fund/agent/thresholds.json",
+  "assessment": "The SKIP filter is working as intended this week. Taken trades won at 83.3% (10/12) while shadow trades won at only 55.0% (33/60), a 28-percentage-point gap that indicates the agent is successfully identifying higher-quality opportunities and correctly discarding lower-quality ones. The 55% shadow win rate is only marginally above the ~50% baseline one would expect from a coin-flip market, confirming that skipped games carried little exploitable edge. The filter is adding clear value.",
+  "sample_size_note": "The taken-trade bucket has only 12 resolved outcomes, well below the 30-outcome threshold for reliable inference, so no threshold changes are warranted this week \u2014 the strong win-rate differential is encouraging but too noisy to act on without risking overfitting.",
+  "proposals": []
+}

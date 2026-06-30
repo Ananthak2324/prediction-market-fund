@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — daily iMessage digest (triggered by prediction-fund-digest.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/send_digest.py
+StandardOutput=append:/opt/prediction-fund/data/snapshots/digest_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/digest_err.log

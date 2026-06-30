@@ -1,0 +1,10 @@
+[Unit]
+Description=Run prediction-fund-snapshot every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=600
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

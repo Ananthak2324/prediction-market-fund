@@ -1,0 +1,10 @@
+[Unit]
+Description=Run prediction-fund-outcomes every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=900
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

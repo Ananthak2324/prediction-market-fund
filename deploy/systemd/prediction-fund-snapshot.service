@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — snapshot capture (triggered by prediction-fund-snapshot.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/schedule_snapshots.py
+StandardOutput=append:/opt/prediction-fund/data/snapshots/launchd_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/launchd_err.log

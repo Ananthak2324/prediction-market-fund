@@ -1,0 +1,10 @@
+[Unit]
+Description=Run prediction-fund-digest daily at 2 AM
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

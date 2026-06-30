@@ -88,7 +88,7 @@
       "replacement_flags": []
     }
   ],
-  "last_updated": "2026-06-30T01:15:39.882167+00:00",
+  "last_updated": "2026-06-30T03:30:52.574498+00:00",
   "agent_stats": {
     "total_evaluated": 61,
     "trade_recommendations": 0,
@@ -101,8 +101,8 @@
     "pinnacle_unstable_rate": 0.6721,
     "high_confidence_win_rate": null,
     "medium_confidence_win_rate": null,
-    "shadow_resolved": 0,
-    "shadow_win_rate": null
+    "shadow_resolved": 60,
+    "shadow_win_rate": 0.55
   },
   "portfolio_metrics": {
     "avg_ev_per_trade": 0.8454,

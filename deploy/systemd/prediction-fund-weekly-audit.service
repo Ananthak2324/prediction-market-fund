@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — weekly calibration audit (triggered by prediction-fund-weekly-audit.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/weekly_audit.py
+StandardOutput=append:/opt/prediction-fund/data/snapshots/weekly_audit_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/weekly_audit_err.log

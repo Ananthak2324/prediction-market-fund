@@ -1,0 +1,6 @@
+{
+  "pinnacle_movement_threshold": 0.03,
+  "large_gap_warn": 0.20,
+  "tier1_min_gap": 0.10,
+  "tier2_min_gap": 0.05
+}

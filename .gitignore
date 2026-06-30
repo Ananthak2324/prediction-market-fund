@@ -19,6 +19,8 @@ env/
 # Data — runtime and large historical files
 data/raw/
 data/snapshots/
+data/.notify_sent_ids.json
+data/notification_queue.jsonl
 
 # macOS
 .DS_Store
@@ -33,6 +35,7 @@ notebooks/.ipynb_checkpoints/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 

@@ -1,0 +1,17 @@
+[Unit]
+Description=Prediction Fund — position manager (always-on)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 -u execution/position_manager.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/prediction-fund/data/snapshots/positions_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/positions_err.log
+
+[Install]
+WantedBy=multi-user.target

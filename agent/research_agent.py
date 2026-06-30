@@ -39,8 +39,32 @@ MODEL         = "claude-sonnet-4-6"
 
 SPORT_KEYS = {"MLB": "baseball_mlb", "NBA": "basketball_nba"}
 
-PINNACLE_MOVEMENT_THRESHOLD = 0.03
-LARGE_GAP_WARN              = 0.20
+# Decision thresholds — single source of truth shared with scripts/update_outcomes.py
+# and scripts/weekly_audit.py. Hand-edit (or let the weekly audit agent propose edits to)
+# agent/thresholds.json rather than changing these defaults.
+THRESHOLDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thresholds.json")
+_DEFAULT_THRESHOLDS = {
+    "pinnacle_movement_threshold": 0.03,
+    "large_gap_warn":              0.20,
+    "tier1_min_gap":               0.10,
+    "tier2_min_gap":               0.05,
+}
+
+
+def _load_thresholds() -> dict:
+    try:
+        with open(THRESHOLDS_FILE) as f:
+            return {**_DEFAULT_THRESHOLDS, **json.load(f)}
+    except Exception:
+        return dict(_DEFAULT_THRESHOLDS)
+
+
+THRESHOLDS = _load_thresholds()
+
+PINNACLE_MOVEMENT_THRESHOLD = THRESHOLDS["pinnacle_movement_threshold"]
+LARGE_GAP_WARN              = THRESHOLDS["large_gap_warn"]
+TIER1_MIN_GAP               = THRESHOLDS["tier1_min_gap"]
+TIER2_MIN_GAP               = THRESHOLDS["tier2_min_gap"]
 
 COST_LOG = "data/agent_cost_log.csv"
 
@@ -51,14 +75,14 @@ PRICE_OUTPUT        = 15.00
 PRICE_PER_SEARCH    = 0.01
 
 
-SYSTEM_PROMPT = """You are a sports prediction market research analyst trained by a professional sports bettor with expertise across MLB, NFL, NBA, and soccer.
+SYSTEM_PROMPT = f"""You are a sports prediction market research analyst trained by a professional sports bettor with expertise across MLB, NFL, NBA, and soccer.
 
 Your job is to analyze pricing gaps between Vegas sportsbook consensus (Pinnacle) and Kalshi prediction market contracts. When a gap exists, you determine whether it is driven by INFORMATION (a real reason Pinnacle might be stale or wrong) or BEHAVIORAL BIAS (retail sentiment, favorite-longshot bias, name recognition, fan loyalty).
 
 SIGNALS THAT MEAN THE GAP IS INFORMATION-DRIVEN — SKIP:
 - Starting pitcher scratched or changed within 6 hours
 - Key position player (top 3 hitter or cleanup) ruled out
-- Pinnacle line has moved more than 3 percentage points since market open — sharp money is moving
+- Pinnacle line has moved more than {PINNACLE_MOVEMENT_THRESHOLD:.0%} since market open — sharp money is moving
 - Significant weather event (wind 15+ mph blowing in at a baseball stadium)
 - Bullpen heavily used in previous 2 days for the favored team
 - Any credible injury report affecting a starter
@@ -105,10 +129,10 @@ _VERDICT_PROMPT = (
     "}\n\n"
     "DECISION RULES (follow exactly):\n"
     "  SKIP   — any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
-    "  HIGH confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-    "weather_issue=false, abs_gap >= 0.10, tier == 1\n"
-    "  MEDIUM confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-    "weather_issue=false, abs_gap >= 0.05, tier == 2\n"
+    f"  HIGH confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
+    f"weather_issue=false, abs_gap >= {TIER1_MIN_GAP}, tier == 1\n"
+    f"  MEDIUM confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
+    f"weather_issue=false, abs_gap >= {TIER2_MIN_GAP}, tier == 2\n"
     "  MONITOR — everything else that is not SKIP"
 )
 

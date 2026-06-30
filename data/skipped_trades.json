@@ -16,7 +16,12 @@
     "news_detail": "Tyler Mahle is returning from a left hamstring strain (last started May 27) and is listed as the Giants' probable starter for this series, making his first start in June. He carries a 1-7 record and 6.04 ERA in 2026. Additionally, the Giants have eight pitchers on the injured list including multiple Tommy John surgeries, representing a significant injury-depleted rotation context. Athletics starter Civale is confirmed at 5-3 with a 4.91 ERA.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0316,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -35,7 +40,12 @@
     "news_detail": "Tyler Mahle (Giants SP) is returning from a left hamstring strain (injured May 27) and is listed as the scheduled starter \u2014 this is his first start back in June. He carries a 1-7 record and 6.04 ERA in 2026. The Giants also have eight pitchers on the injured list including four Tommy John surgeries. Aaron Civale (5-3, 4.91 ERA) is the confirmed Athletics starter.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0316,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -54,7 +64,12 @@
     "news_detail": "San Francisco Giants have eight pitchers on the injured list, including Tyler Mahle returning from a left hamstring strain for his first June start (1-7, 6.04 ERA). Athletics counter with Aaron Civale (5-3, 4.91 ERA). The Giants rotation and roster are significantly depleted by injuries in 2026, including four Tommy John surgeries.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0472,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -73,7 +88,12 @@
     "news_detail": "Giants have eight pitchers on the injured list including four Tommy John surgeries. Tyler Mahle (returning from left hamstring strain, 1-7 / 6.04 ERA) is the scheduled Giants starter vs. Athletics starter Aaron Civale (5-3 / 4.91 ERA). Mahle is returning from injury and has not started since May 27. Significant pitching-staff injury context for San Francisco.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -92,7 +112,12 @@
     "news_detail": "Giants have eight pitchers on the injured list, including four Tommy John surgeries. Tyler Mahle (returning from left hamstring strain, 1-7, 6.04 ERA) is slated to start vs. Athletics, while Athletics counter with Aaron Civale (5-3, 4.91 ERA). Mahle is making his first start since May 27 and has been ineffective all season. Significant pitching staff attrition on the Giants side noted.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -111,7 +136,12 @@
     "news_detail": "Giants have eight pitchers on the injured list, including four Tommy John surgeries. Tyler Mahle (1-7, 6.04 ERA) is scheduled to return from a left hamstring strain for this series \u2014 this will be his first start since May 27. Athletics counter with Aaron Civale (5-3, 4.91 ERA). Mahle's injury return status introduces real roster and performance uncertainty.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -130,7 +160,12 @@
     "news_detail": "Giants have eight pitchers on the injured list including four Tommy John surgeries. Tyler Mahle is scheduled to return from a left hamstring strain (first start since May 27) and is the likely starter vs. the Athletics, but he is 1-7 with a 6.04 ERA on the season and is returning from injury \u2014 a meaningful roster/health risk flag. Pinnacle also moved 3.5% since snapshot (51.5% \u2192 55.0%), confirming sharp money is actively moving into the Giants.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -149,7 +184,12 @@
     "news_detail": "Tyler Mahle (Giants SP) is returning from a left hamstring strain with a 1-7 record and 6.04 ERA; the Giants have eight pitchers on the injured list including four Tommy John surgeries. Athletics SP Aaron Civale is listed at 5-3 with a 4.91 ERA. Mahle's return is described as his first start in June after missing time since May 27.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -168,7 +208,12 @@
     "news_detail": "Giants have eight pitchers on the injured list, including four Tommy John surgeries. Tyler Mahle (1-7, 6.04 ERA) is their announced starter returning from a left hamstring strain suffered May 27 \u2014 this is his first start back in June. Athletics counter with Aaron Civale (5-3, 4.91 ERA). Significant injury burden on San Francisco's pitching staff is confirmed.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -187,7 +232,12 @@
     "news_detail": "Giants starting pitcher Tyler Mahle is returning from a left hamstring strain (injured May 27, first June start), carries a 1-7 record and 6.04 ERA. The Giants have eight pitchers on the injured list including four Tommy John surgeries, indicating a severely depleted rotation. Pinnacle has also moved 4.7% since snapshot (now 56.2%), consistent with sharp money reacting to injury/roster context.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0472,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -206,7 +256,12 @@
     "news_detail": "Giants starter Tyler Mahle is returning from a left hamstring strain (injured May 27, first June start), posting a 1-7 record with a 6.04 ERA. The Giants have eight pitchers on the injured list including four Tommy John surgeries. Athletics starter Civale counters at 5-3 with a 4.91 ERA.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -225,7 +280,12 @@
     "news_detail": "San Francisco Giants have eight pitchers on the injured list including four Tommy John surgeries. Tyler Mahle (returning from left hamstring strain, 1-7, 6.04 ERA) is the announced Giants starter vs. Athletics' Aaron Civale (5-3, 4.91 ERA). Mahle is returning from injury and this will be his first start in June. The Giants pitching staff is heavily depleted.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -244,7 +304,12 @@
     "news_detail": "Giants have eight pitchers on the injured list including four Tommy John surgeries; Tyler Mahle (returning from left hamstring strain, 1-7, 6.04 ERA) is scheduled to start vs. Athletics, with Aaron Civale (5-3, 4.91 ERA) countering for Oakland. Mahle is described as struggling significantly and this is his first start back in June after missing time.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -263,7 +328,12 @@
     "news_detail": "Giants have eight pitchers on the injured list including four Tommy John surgeries; Tyler Mahle is scheduled to start but is returning from a left hamstring strain (first start since May 27) with a 1-7 record and 6.04 ERA. Athletics counter with Civale at 5-3 / 4.91 ERA. Significant pitching depth crisis confirmed for San Francisco.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0351,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -282,7 +352,12 @@
     "news_detail": "Tyler Mahle (Giants SP) is returning from a left hamstring strain suffered May 27 \u2014 this is his first start in June. He carries a 1-7 record and 6.04 ERA on the season. The Giants have eight pitchers on the injured list. Aaron Civale is the confirmed Athletics starter (5-3, 4.91 ERA). Neither starter is described as an ace, making the game a toss-up per the source.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -301,7 +376,12 @@
     "news_detail": "Giants SP Tyler Mahle is returning from a left hamstring strain (injured May 27, first start back in June) with a 1-7 record and 6.04 ERA. The Giants currently have eight pitchers on the injured list including four Tommy John surgeries. Athletics SP Aaron Civale is listed at 5-3 with a 4.91 ERA. Both starters are described as non-aces, making the game a near toss-up.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -320,7 +400,12 @@
     "news_detail": "Tyler Mahle is returning from a left hamstring strain (injured May 27) and is scheduled to start for the Giants \u2014 this will be his first start in June. Mahle is 1-7 with a 6.04 ERA in 2026. The Giants currently have eight pitchers on the injured list. The Athletics counter with Aaron Civale (5-3, 4.91 ERA). The Giants are listed as -134 ML favorites per lineups.com.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -339,7 +424,12 @@
     "news_detail": "Giants starting pitcher Tyler Mahle is returning from a left hamstring strain (injured May 27, first June start) and is 1-7 with a 6.04 ERA. The Giants have eight pitchers currently on the injured list, including four Tommy John surgeries. Athletics starter Aaron Civale is listed at 5-3 with a 4.91 ERA. The Giants' pitching staff is severely depleted.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -358,7 +448,12 @@
     "news_detail": "Giants starting pitcher Tyler Mahle is returning from a left hamstring strain (injured May 27, first start back in June) with a poor 1-7 record and 6.04 ERA. The Giants also have eight pitchers on the injured list including four Tommy John surgeries. Athletics starter Aaron Civale is listed at 5-3 with a 4.91 ERA. Neither starter is described as an ace, making this closer to a toss-up than the Kalshi price of 54.5% Giants suggests.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -377,7 +472,12 @@
     "news_detail": "Giants starter Tyler Mahle is returning from a left hamstring strain (injured May 27, first start back in June), carries a 1-7 record and 6.04 ERA on the season. Eight Giants pitchers remain on the injured list even with Mahle's return. Athletics starter Austin Civale is listed at 5-3 with a 4.91 ERA. The lineups.com snapshot shows Athletics as the moneyline favorite (+115 ATH / -134 SF implied), which conflicts with Kalshi pricing SF at only 45.5%.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -396,7 +496,12 @@
     "news_detail": "Caleb Durbin (Boston Red Sox infielder) suffered a left fifth finger subluxation/dislocation during Wednesday's game vs. Colorado Rockies but has been cleared and is confirmed in the starting lineup for the June 25 series opener vs. Yankees. Additionally, Yankees ace Max Fried has been on the IL since May 14 with a left elbow bone bruise (estimated return: July), and Giancarlo Stanton is on the IL with a strained right calf (estimated return: late June). No starting pitcher scratch or change found for June 27 specifically, but Pinnacle instability is the dominant signal.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -415,7 +520,12 @@
     "news_detail": "Caleb Durbin (Boston Red Sox infielder) suffered a left fifth finger subluxation (dislocated pinky) on June 25 but is confirmed returning to the starting lineup for the June 25 series opener vs. the Yankees. Separately, Max Fried (Yankees SP) is on the IL with a bone bruise in his left elbow with an estimated return of July, and Giancarlo Stanton (Yankees DH) is on the IL with a strained right calf with an estimated late-June return. These are pre-existing IL stints, not new scratches for June 27.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -434,7 +544,12 @@
     "news_detail": "Max Scherzer (Blue Jays SP) placed on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot; he will not start vs. Rangers on 2026-06-26. Texas Rangers also have Jack Leiter (right ankle) on the 15-day IL, with Kumar Rocker projected as the Saturday starter. Toronto's rotation is depleted with Jose Berrios also absent, though Shane Bieber recently returned from the IL.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1454,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -453,7 +568,12 @@
     "news_detail": "Giants have eight pitchers on the injured list, including four Tommy John surgeries. Tyler Mahle is scheduled to start vs. the Athletics but is returning from a left hamstring strain (first start since May 27) with a 1-7 record and 6.04 ERA. Athletics counter with Aaron Civale (5-3, 4.91 ERA). Both starters are confirmed but the Giants' deep injury context is notable.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -472,7 +592,12 @@
     "news_detail": "Blue Jays SP Max Scherzer is traveling to Dallas for a cortisone shot in his back to alleviate left-side discomfort, per manager John Schneider on June 25. He was placed on the 15-day IL with back spasms and is not expected to start vs. Texas on June 26. Additionally, Rangers SP Jack Leiter is on the 15-day IL with right ankle posterior impingement, and Texas has multiple other pitchers on IL (Jordan Montgomery, Cody Bradford). Toronto's rotation is significantly depleted, also missing Jose Berrios and previously Dylan Cease.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1454,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -491,7 +616,12 @@
     "news_detail": "Giants are in a severe injury crisis \u2014 eight pitchers currently on the IL. Tyler Mahle (1-7, 6.04 ERA) is scheduled to return from a hamstring strain as the likely Giants starter; he has been struggling badly and this is his first June start. Athletics counter with Aaron Civale (5-3, 4.91 ERA). Neither starter is an ace, but the Giants' depleted rotation and heavy IL burden are meaningful context weighing against the home team.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -510,7 +640,12 @@
     "news_detail": "Tyler Mahle (Giants SP) is returning from a left hamstring strain suffered May 27 \u2014 this is his first start back in June. He carries a 1-7 record and 6.04 ERA on the season. The Giants also have eight pitchers on the injured list overall, reflecting a severely depleted pitching staff. Athletics SP Aaron Civale is confirmed at 5-3 with a 4.91 ERA.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -529,7 +664,12 @@
     "news_detail": "Boston Red Sox utility player Caleb Durbin suffered a left fifth finger subluxation on June 25 and is questionable for the June 26 game vs. the Yankees. Durbin had been one of Boston's hottest hitters (.458/.480/.833 over the prior week). Additionally, Pinnacle has moved 3.8% since snapshot (59.9% \u2192 56.1%), confirming sharp money is actively repricing this game. Max Fried (Yankees SP) remains on the IL with a bone bruise in his left elbow (estimated return July), which may be contributing to Pinnacle's downward revision on the Yankees.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -548,7 +688,12 @@
     "news_detail": "Giants confirmed Tyler Mahle as starting pitcher vs. Athletics, returning from a left hamstring strain (first start since May 27). Mahle is 1-7 with a 6.04 ERA in 2026. The Giants also have eight pitchers currently on the injured list, reflecting severe pitching depth issues. Athletics counter with Aaron Civale at 5-3 with a 4.91 ERA.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -567,7 +712,12 @@
     "news_detail": "Boston Red Sox utility player Caleb Durbin suffered a left fifth finger subluxation on June 25 and is listed as questionable for the Yankees series. Additionally, Pinnacle has moved 3.8% since snapshot (now 43.9%), indicating sharp money is actively moving this line. No starting pitcher scratch was found, but the Durbin injury is a confirmed roster-affecting news item, and the unstable Pinnacle line is a hard SKIP trigger.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -586,7 +736,12 @@
     "news_detail": "Giants announced starters for the Athletics series: Tyler Mahle is scheduled to return from a left hamstring strain for San Francisco, while Aaron Civale (5-3, 4.91 ERA) starts for Oakland. Mahle is 1-7 with a 6.04 ERA this season and has not started since May 27. The Giants also have eight pitchers currently on the injured list, including four Tommy John surgeries. Critically, the article notes Mahle is 'returning' \u2014 meaning this is his first start back from injury, introducing meaningful health/performance uncertainty for the Giants' starter.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -605,7 +760,12 @@
     "news_detail": "Max Scherzer (Toronto SP) is heading to Dallas for a cortisone shot in his back due to left-side discomfort, per manager John Schneider on June 25. He last pitched June 10 and is on the 15-day IL with back spasms. Additionally, Texas Rangers SP Jack Leiter is on the 15-day IL (right ankle). The series preview confirms Toronto's rotation health is a key concern, with multiple pitchers (Berrios, Scherzer, Bieber recently returning) affected. Kumar Rocker (Saturday) and Cal Quantrill (Sunday) are the expected Rangers starters.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1443,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -624,7 +784,12 @@
     "news_detail": "Giants starter Tyler Mahle is returning from a left hamstring strain (injured May 27, first June start) with a poor 1-7 record and 6.04 ERA. The Giants also have eight pitchers on the injured list including four Tommy John surgeries. Athletics starter Aaron Civale is listed at 5-3 with a 4.91 ERA. Lineups.com shows the Athletics as slight moneyline favorites (+115 ATH, -134 ATH implied ~57% for Athletics), which aligns more closely with Pinnacle's 51.5% than Kalshi's 45.5%.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -643,7 +808,12 @@
     "news_detail": "Max Scherzer (Blue Jays SP) is on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot in his back; he is unavailable for the June 26 game. The Rangers also have multiple pitchers on the IL (Jack Leiter, Jalen Beeks, Chris Martin), and Kumar Rocker is the expected Saturday starter for Texas. Toronto's rotation is depleted with Scherzer, Berrios, and Dylan Cease all injured, though Shane Bieber was recently activated.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1443,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -662,7 +832,12 @@
     "news_detail": "Yankees ace Max Fried is on the IL with a bone bruise in his left elbow since May 14, with an estimated return in July. Giancarlo Stanton (strained right calf, est. return late June) and reliever Angel Chivilli (right shoulder inflammation, est. return late June) are also on the Yankees IL. Boston's Caleb Durbin suffered a left fifth finger subluxation (dislocation) in Wednesday's game but has been confirmed in the lineup for the June 25 series opener vs. New York.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -681,7 +856,12 @@
     "news_detail": "Caleb Durbin (Red Sox infielder) suffered a left fifth finger subluxation (dislocated pinky) on June 25 but returned to the starting lineup for the series opener vs. Yankees on June 25. Additionally, Yankees ace Max Fried is on the IL with a bone bruise in his left elbow with an estimated return of July, and Giancarlo Stanton (strained right calf) has an estimated return of late June \u2014 both on the injured list heading into this series.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -700,7 +880,12 @@
     "news_detail": "Max Scherzer (Blue Jays SP) is on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot; he is unavailable for the June 26 game. Additionally, Texas Rangers SP Jack Leiter is on the 15-day IL with right ankle posterior impingement, and Kumar Rocker is the expected Saturday starter for Texas. Toronto's rotation is also missing Jos\u00e9 Berr\u00edos, though Shane Bieber was recently activated.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1454,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -719,7 +904,12 @@
     "news_detail": "Max Scherzer (Toronto SP) is on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot in his back. He is unavailable for the June 26 game. Additionally, Jack Leiter (Texas SP) is on the 15-day IL with right ankle posterior impingement, and Kumar Rocker is the expected Rangers starter on Saturday (June 27), suggesting a different/TBD arm for Friday June 26.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1454,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -738,7 +928,12 @@
     "news_detail": "Boston Red Sox IF Caleb Durbin suffered a left fifth finger subluxation on June 25 and his availability for the June 26 Yankees game is uncertain. Additionally, Max Fried (Yankees SP) remains on the IL with a bone bruise to his left elbow with an estimated return of July, and Giancarlo Stanton (Yankees DH) is on the IL with a strained right calf. The NESN lineup report does show Durbin returning, but his status was flagged as uncertain heading into game day.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -757,7 +952,12 @@
     "news_detail": "Caleb Durbin (Boston Red Sox) suffered a left fifth finger subluxation on June 25 and is questionable for the Yankees series. He had been one of Boston's hottest hitters, posting a .458/.480/.833 line over the prior week. Additionally, Yankees SP Max Fried remains on the IL with a bone bruise in his left elbow (estimated return July), and Giancarlo Stanton is on the IL with a strained right calf (estimated return late June). No starting pitcher scratch confirmed for June 26, but multiple roster-affecting injuries are present on both sides.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0377,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -776,7 +976,12 @@
     "news_detail": "Max Scherzer (TOR) is on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot in his back, ruling him out for the June 26 game. Jack Leiter (TEX) is also on the 15-day IL with a right ankle posterior impingement. Toronto's rotation is significantly depleted (also missing Jos\u00e9 Berr\u00edos, Dylan Cease on IL), though Shane Bieber was recently activated. The Pinnacle line has also moved sharply \u2014 14.4% \u2014 indicating sharp money is already pricing in these roster/injury realities.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1443,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -795,7 +1000,12 @@
     "news_detail": "Max Scherzer (Blue Jays SP) is on the 15-day IL with back spasms and is traveling to Dallas for a cortisone shot in his back. He is not expected to start for this series. Additionally, Texas Rangers SP Jack Leiter is on the 15-day IL with right ankle posterior impingement, and the Rangers also have multiple other pitchers on the IL (Jordan Montgomery, Cody Bradford). Toronto's starting pitching staff has also been ravaged by injury \u2014 Dylan Cease and Jose Berrios also on IL \u2014 though Shane Bieber was recently activated.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.1443,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -814,7 +1024,12 @@
     "news_detail": "Giants starter Tyler Mahle is returning from a left hamstring strain (first start since May 27) and is 1-7 with a 6.04 ERA in 2026. The Giants have eight pitchers on the IL. Athletics starter Civale is 5-3 with a 4.91 ERA. The source notes neither pitcher can be described as an ace, making the game closer to a toss-up.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -833,7 +1048,12 @@
     "news_detail": "Giants starter Tyler Mahle is returning from a left hamstring strain (missed since May 27) and carries a 1-7 record with a 6.04 ERA in 2026. The Giants also have eight pitchers on the injured list. Athletics starter Aaron Civale is slotted at 5-3 with a 4.91 ERA. Neither starter is described as an ace, and the article notes the matchup is a 'real toss-up.'",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -852,7 +1072,12 @@
     "news_detail": "Tyler Mahle is scheduled to start for the Giants vs. Athletics, returning from a left hamstring strain (last started May 27). He is 1-7 with a 6.04 ERA in 2026. The Giants have eight pitchers on the injured list including four Tommy John surgeries. Aaron Civale (5-3, 4.91 ERA) is confirmed as the Athletics' starter. The source notes 'neither of these pitchers can be described as an ace, which could make this game a real toss-up.'",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1702|KXMLBGAME-26JUN251545ATHSF",
@@ -871,7 +1096,12 @@
     "news_detail": "Tyler Mahle is returning from a left hamstring strain (injured May 27) to start for the Giants vs. the Athletics. He is 1-7 with a 6.04 ERA in 2026. The Giants also have eight pitchers on the injured list including four Tommy John surgeries. Athletics SP Aaron Civale is listed at 5-3 with a 4.91 ERA.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -890,7 +1120,12 @@
     "news_detail": "Tyler Mahle is scheduled to start for the Giants returning from a left hamstring strain (last started May 27). He is 1-7 with a 6.04 ERA in 2026. The Giants have eight pitchers on the injured list including four Tommy John surgeries. Athletics starter Austin Civale is confirmed at 5-3 with a 4.91 ERA. The article describes this as a near toss-up matchup given neither starter is an ace.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-24_1802|KXMLBGAME-26JUN251545ATHSF",
@@ -909,7 +1144,12 @@
     "news_detail": "Tyler Mahle is returning from a left hamstring strain (out since May 27) and is scheduled to start for the Giants against the Athletics. He is 1-7 with a 6.04 ERA on the season and this will be his first start back in June. The Giants also have eight pitchers on the injured list total. The Athletics counter with Aaron Civale (5-3, 4.91 ERA). The source notes 'neither of these pitchers can be described as an ace,' making the game a near toss-up.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-ATH",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -928,7 +1168,12 @@
     "news_detail": "Yankees ace Max Fried is on the IL with a bone bruise in his left elbow since May 14, with an estimated return in July. Giancarlo Stanton (strained right calf, IL since April 25) has an estimated return of late June and may be close to active. Clarke Schmidt is recovering from Tommy John surgery. These are notable roster absences for New York heading into the June 27 game.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -947,7 +1192,12 @@
     "news_detail": "Max Fried (Yankees SP #1) is on the IL with a bone bruise in his left elbow since May 14, with an estimated return of July. Giancarlo Stanton (Yankees DH/cleanup) is on the IL with a strained right calf since April 25, with a late-June estimated return. Clarke Schmidt is out until August-September recovering from Tommy John surgery.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -966,7 +1216,12 @@
     "news_detail": "Multiple relevant injury and roster findings: (1) Texas Rangers have Jack Leiter (RHP) on the 15-Day IL with right ankle posterior impingement, plus Jordan Montgomery and Cody Bradford on the 60-Day IL, thinning their rotation. Kumar Rocker is the expected Saturday starter. (2) Toronto Blue Jays have significant pitching staff health concerns \u2014 Dylan Cease and Max Scherzer both on IL, Shane Bieber recently returned from IL. (3) Pinnacle has moved 7.2% since snapshot (57.9% \u2192 50.7%), a clear sharp-money signal. (4) Corey Seager (Rangers SS, key bat) was expected back from IL as early as Thursday, meaning he may be active for this game.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.072,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -985,7 +1240,12 @@
     "news_detail": "Multiple injury-relevant findings: Texas Rangers have Jack Leiter (RHP) on the 15-Day IL with right ankle posterior impingement, plus Chris Martin and Jalen Beeks also on IL. Toronto Blue Jays have Dylan Cease on the 15-Day IL, Max Scherzer on IL (unlikely to be activated), and Shane Bieber just returning from IL. Starting pitcher uncertainty exists on both sides. Additionally, Texas is hoping to get Corey Seager back from the IL as early as Thursday, which would be a significant lineup change. Saturday starter for Texas is listed only as 'expected' (Kumar Rocker) and Sunday (Cal Quantrill) is filling in for the injured Jack Leiter \u2014 confirming rotation instability.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.072,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -1004,7 +1264,12 @@
     "news_detail": "Boston Red Sox hitter Caleb Durbin diagnosed with a subluxation of his left pinky after injuring his hand, and was posting a .458/.480/.833 line over the prior week \u2014 Boston may be without one of their hottest hitters vs. the Yankees. Additionally, Yankees pitcher Max Fried is on the IL (bone bruise, left elbow, estimated return July), and Giancarlo Stanton has a strained right calf with a late-June estimated return. Pinnacle also moved 8.2% since snapshot (51.6% vs. 59.9%), a hard SKIP trigger on its own.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -1023,7 +1288,12 @@
     "news_detail": "Boston Red Sox hitter Caleb Durbin (posting a .458/.480/.833 line over the past week) was diagnosed with a subluxation of his left pinky and may be unavailable for the Yankees series. Additionally, Juan Soto's back locked up on Tuesday, raising questions about his availability. On the Yankees side, Max Fried remains on the IL with a bone bruise (left elbow, est. return July), and Giancarlo Stanton is on the IL with a strained right calf. Pinnacle has also moved 8.2% since snapshot \u2014 a confirmed sharp-money instability trigger.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-BOS",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -1042,7 +1312,12 @@
     "news_detail": "Rangers have multiple pitchers on the IL including Jack Leiter (right ankle posterior impingement), Chris Martin (right shoulder impingement), and Jalen Beeks (lower back spasms). Rangers starter Kumar Rocker is expected to start Saturday (6/27) and Cal Quantrill on Sunday (6/28), stepping in for the injured Jack Leiter. Texas also hopes to get Corey Seager back from the IL as early as Thursday (6/26). Blue Jays pitching staff is depleted with Dylan Cease, Max Scherzer, and Shane Bieber (returning from IL) all recently on or coming off the injured list. Additionally, Pinnacle has moved 7.1% since snapshot, a confirmed sharp-money signal.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0709,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1737|KXMLBGAME-26JUN261907TEXTOR",
@@ -1061,7 +1336,12 @@
     "news_detail": "Multiple relevant injury and roster findings: (1) Rangers SP Jack Leiter is on the 15-Day IL with right ankle posterior impingement; Kumar Rocker is the expected Saturday starter. (2) Rangers SP Cal Quantrill is expected Sunday starter after filling in for the injured Leiter. (3) Rangers are hoping to get SS Corey Seager back from the IL as early as Thursday. (4) Blue Jays have multiple pitchers on IL including Dylan Cease (15-Day), Shane Bieber (recently returned from IL), Max Scherzer (on IL, unlikely to be activated). (5) Pinnacle line is confirmed UNSTABLE \u2014 moved 7.1% since snapshot, a strong sharp-money signal.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0709,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TEX",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-24_1602|KXMLBGAME-26JUN251545ATHSF",
@@ -1080,7 +1360,12 @@
     "news_detail": "Tyler Mahle (Giants SP) is returning from a left hamstring strain suffered May 27 for what will be his first start in June. He carries a 1-7 record and 6.04 ERA on the season. The Giants also have eight pitchers on the injured list entering this series. Athletics SP Aaron Civale is listed at 5-3 with a 4.91 ERA. The source describes the matchup as a 'real toss-up' given neither pitcher is an ace.",
     "pinnacle_stable": true,
     "pinnacle_movement": null,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN251545ATHSF",
+    "kalshi_ticker": "KXMLBGAME-26JUN251545ATHSF-SF",
+    "shadow_outcome": "WIN",
+    "shadow_correct": true,
+    "shadow_resolved_at": "2026-06-25T22:47:40.600956Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN271310NYYBOS",
@@ -1099,7 +1384,12 @@
     "news_detail": "Heavy.com reports the pitching matchups for the June 27 game have been announced: Gerrit Cole is slated to start for the Yankees against a Red Sox starter (Connelly Early or Payton Tolle rotation slot). Critically, Max Fried (Yankees ace) is confirmed on the IL with a bone bruise on his left elbow with an estimated return in July. Additionally, Boston is 1-4 against the Yankees this season, just returned from a road trip, and has an AL-low 32 wins, suggesting a weaker Red Sox squad. More critically, Pinnacle has moved 8.2% since the snapshot (from 59.9% to 51.6%), a confirmed sharp-money trigger for SKIP.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN271310NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN271310NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T19:42:43.897314Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261907TEXTOR",
@@ -1118,7 +1408,12 @@
     "news_detail": "Multiple relevant findings: (1) Pinnacle has moved 7.4% (57.9% \u2192 50.5%) since snapshot \u2014 sharp money is actively moving this line. (2) Rangers have significant injury concerns: Jack Leiter (15-Day IL, right ankle), Jordan Montgomery (60-Day IL, Tommy John), Cody Bradford (60-Day IL), with Cal Quantrill stepping in as an injury replacement starter. (3) Corey Seager (key position player/shortstop) is listed as possibly returning from IL 'as early as Thursday,' introducing lineup uncertainty. (4) Toronto SP situation also unsettled \u2014 Dylan Cease on 15-Day IL, Max Scherzer on IL (unlikely to be activated), though Shane Bieber recently returned. (5) The game is part of a 4-game series starting June 25, with probable pitchers announced but not confirmed locked in for Saturday June 26 start.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0744,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261907TEXTOR",
+    "kalshi_ticker": "KXMLBGAME-26JUN261907TEXTOR-TOR",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T02:12:44.06445Z"
   },
   {
     "trade_id": "2026-06-25_1407|KXMLBGAME-26JUN261910NYYBOS",
@@ -1137,6 +1432,11 @@
     "news_detail": "Multiple relevant injury and roster concerns found. Boston's Caleb Durbin (left pinky subluxation/partial dislocation) is playing through pain and listed as day-to-day; Isiah Kiner-Falefa is on the 10-day IL and undergoing a CT scan for a possible forearm fracture; Marcelo Mayer (sore foot) was held from starts. On the Yankees side, Max Fried (bone bruise, left elbow) is on the IL with an estimated July return, and Giancarlo Stanton (strained right calf, estimated late June return) remains out. Additionally, Pinnacle's line has moved 8.2% since snapshot (now 51.6% vs. snap 59.9%), a clear sharp-money signal.",
     "pinnacle_stable": false,
     "pinnacle_movement": 0.0823,
-    "weather_issue": false
+    "weather_issue": false,
+    "event_ticker": "KXMLBGAME-26JUN261910NYYBOS",
+    "kalshi_ticker": "KXMLBGAME-26JUN261910NYYBOS-NYY",
+    "shadow_outcome": "LOSS",
+    "shadow_correct": false,
+    "shadow_resolved_at": "2026-06-27T01:42:44.084041Z"
   }
 ]

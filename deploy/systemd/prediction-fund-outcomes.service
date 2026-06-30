@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — outcome resolution (triggered by prediction-fund-outcomes.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/update_outcomes.py
+StandardOutput=append:/opt/prediction-fund/data/snapshots/outcomes_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/outcomes_err.log
