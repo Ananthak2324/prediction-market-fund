@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from execution.position_sizer import calculate_position, get_available_cash
+from core.notifications import send_imessage
 
 DB_PATH      = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_trades.db")
 KALSHI_BASE  = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
@@ -245,6 +246,19 @@ def open_sandbox_position(paper_trade: dict) -> bool:
 
 # ── Exit helpers ──────────────────────────────────────────────────────────────
 
+def _format_trade_exit_message(row: sqlite3.Row, exit_type: str, pnl_dollars: float,
+                                pnl_pct: float, bankroll_after: float,
+                                current_price: float) -> str:
+    emoji = "\U0001F7E2" if pnl_dollars >= 0 else "\U0001F534"
+    return (
+        f"{emoji} TRADE CLOSED — {exit_type}\n"
+        f"{row['game']}\n"
+        f"{row['shares']} sh @ ${row['entry_price']:.3f} → exit ${current_price:.3f}\n"
+        f"P&L: {pnl_dollars:+.2f} ({pnl_pct * 100:+.1f}%)\n"
+        f"Sandbox bankroll: ${bankroll_after:,.2f}"
+    )
+
+
 def _close_position(conn: sqlite3.Connection, row: sqlite3.Row,
                     current_price: float, exit_type: str) -> None:
     """Write exit fields, update bankroll history, and print the exit event."""
@@ -277,6 +291,13 @@ def _close_position(conn: sqlite3.Connection, row: sqlite3.Row,
         f"  Bought: {shares} shares @ ${entry_price:.3f}  |  Exit: ${current_price:.3f}\n"
         f"  P&L: {pnl_sign}${pnl_dollars:.2f} ({pnl_pct * 100:+.1f}%)  |  Bankroll: ${bankroll_after:,.2f}"
     )
+
+    try:
+        send_imessage(_format_trade_exit_message(
+            row, exit_type, pnl_dollars, pnl_pct, bankroll_after, current_price
+        ))
+    except Exception as _notify_err:
+        print(f"  [NOTIFY] trade-exit notification skipped: {_notify_err}")
 
 
 # ── Poll open positions ───────────────────────────────────────────────────────

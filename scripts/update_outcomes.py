@@ -35,6 +35,7 @@ from scipy.stats import binomtest
 load_dotenv()
 
 from core.utils import ticker_to_utc
+from core.notifications import send_imessage
 
 try:
     from agent.research_agent import run as _agent_run
@@ -117,6 +118,23 @@ def _agent_fields(verdict: dict) -> dict:
         "pinnacle_stable":   verdict.get("pinnacle_stable"),
         "pinnacle_movement": verdict.get("pinnacle_movement"),
     }
+
+
+def _format_trade_entry_message(trade: dict) -> str:
+    abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
+    tier    = 1 if abs_gap >= 0.10 else 2
+    k_prob  = trade.get("k_prob") or 0
+    v_prob  = trade.get("v_prob") or 0
+    gap     = trade.get("gap") or 0
+    verdict = trade.get("agent_verdict") or "—"
+    conf    = trade.get("agent_confidence") or "—"
+    return (
+        f"\U0001F7E2 TRADE LOGGED\n"
+        f"{trade.get('game', '')}\n"
+        f"{trade.get('signal', '')} {trade.get('team', '')}  |  Tier {tier}\n"
+        f"Kalshi {k_prob:.1%}  vs  Pinnacle {v_prob:.1%}   (gap {gap:+.1%})\n"
+        f"Agent: {verdict} ({conf})"
+    )
 
 
 def _append_skipped(trade: dict, verdict: dict) -> None:
@@ -296,6 +314,11 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                     open_sandbox_position(trade)
                 except Exception as _sb_err:
                     print(f"  [SANDBOX] open_sandbox_position skipped: {_sb_err}")
+
+                try:
+                    send_imessage(_format_trade_entry_message(trade))
+                except Exception as _notify_err:
+                    print(f"  [NOTIFY] trade-entry notification skipped: {_notify_err}")
 
             elif not timing_suspect and existing[event_index[event_ticker]].get("timing_suspect"):
                 # Cleaner snapshot arrived — validate before replacing
