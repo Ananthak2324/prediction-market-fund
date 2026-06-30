@@ -121,8 +121,14 @@ def build_rows(sport: str) -> list[dict]:
     raw_markets = fetch_kalshi_open(SERIES[sport])
     vegas_games = fetch_pinnacle(SPORT_KEYS[sport])
 
-    # Index Vegas by (home, away)
-    by_teams = {(g["home_team"], g["away_team"]): g for g in vegas_games}
+    # Index Vegas by (home, away).
+    # Pinnacle sometimes returns the same matchup twice (tonight + tomorrow).
+    # Prefer entries that actually have odds (non-empty books); keep first with books.
+    by_teams: dict[tuple, dict] = {}
+    for g in vegas_games:
+        key = (g["home_team"], g["away_team"])
+        if key not in by_teams or (not by_teams[key].get("books") and g.get("books")):
+            by_teams[key] = g
 
     # Group Kalshi by event
     events: dict[str, list[dict]] = {}

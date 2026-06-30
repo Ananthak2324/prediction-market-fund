@@ -12,7 +12,10 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 # ─── paths ────────────────────────────────────────────────────────────────────
+import sys
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 ET   = ZoneInfo("America/Chicago")
 
 
@@ -172,7 +175,7 @@ def load_latest_snapshot() -> tuple[dict | None, str | None]:
 @st.cache_data(ttl=30)
 def load_all_recent_rows() -> tuple[list[dict], str]:
     """
-    Aggregate rows from ALL snapshot files in the last 24 hours.
+    Aggregate rows from ALL snapshot files taken today (ET date).
     For each unique event_ticker, keep only the most recent reading.
     Returns (deduplicated_rows, latest_snap_time_label).
     """
@@ -180,8 +183,10 @@ def load_all_recent_rows() -> tuple[list[dict], str]:
     if not files:
         return [], ""
 
-    from datetime import timedelta
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    # Cutoff = midnight today ET (converted to UTC)
+    today_midnight_et = datetime.now(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+    cutoff = today_midnight_et.astimezone(timezone.utc)
+
     recent = []
     for fp in files:
         name = os.path.basename(fp).replace(".json", "")
@@ -259,6 +264,54 @@ def dark_plotly(fig: go.Figure, height: int = 280) -> go.Figure:
 def scrow(key: str, val: str, val_style: str = "") -> str:
     style = f" style='{val_style}'" if val_style else ""
     return f"<div class='scrow'><span class='sckey'>{key}</span><span class='scval'{style}>{val}</span></div>"
+
+
+@st.cache_data(ttl=300)
+def fetch_today_schedule() -> list[dict]:
+    """
+    Fetch today's MLB games from Kalshi (display-only, no Pinnacle needed).
+    Returns [{event_ticker, label, start_et, start_utc}] sorted by start time.
+    Cached 5 min. Returns [] on any error.
+    """
+    import requests
+    from core.utils import ticker_to_utc
+
+    KALSHI_BASE = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
+    today_et    = datetime.now(ET).date()
+
+    try:
+        resp = requests.get(
+            f"{KALSHI_BASE}/events",
+            params={"series_ticker": "KXMLBGAME", "status": "open", "limit": 200},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        events = resp.json().get("events", [])
+    except Exception:
+        return []
+
+    games = []
+    seen: set[str] = set()
+    for ev in events:
+        et_ticker = ev.get("event_ticker", "")
+        if not et_ticker or et_ticker in seen:
+            continue
+        start_utc = ticker_to_utc(et_ticker)
+        if start_utc is None:
+            continue
+        if start_utc.astimezone(ET).date() != today_et:
+            continue
+        seen.add(et_ticker)
+        start_et = start_utc.astimezone(ET)
+        title    = ev.get("title", et_ticker)
+        games.append({
+            "event_ticker": et_ticker,
+            "label":        title,
+            "start_et":     start_et,
+            "start_utc":    start_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        })
+
+    return sorted(games, key=lambda g: g["start_et"])
 
 
 # ─── load data ────────────────────────────────────────────────────────────────
@@ -344,90 +397,103 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📡 Live Gaps", "📋 Trade Log", "�
 # TAB 1 — LIVE GAP SCANNER
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    if not all_recent_rows:
-        st.info("No snapshots yet. Scheduler fires 2h before first pitch.")
-    else:
-        now_utc      = datetime.now(timezone.utc)
-        today_et_date = now_utc.astimezone(ET).date()
+    now_utc       = datetime.now(timezone.utc)
+    today_et_date = now_utc.astimezone(ET).date()
 
-        records = []
-        for row in all_recent_rows:
-            gap     = row.get("gap", 0) or 0
-            abs_gap = row.get("abs_gap", abs(gap))
-            signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
-            tier    = 1 if abs_gap >= 0.10 else 2
+    # ── Build gap records from today's snapshots ──────────────────────────────
+    records = []
+    snapped_tickers: set[str] = set()
+    for row in all_recent_rows:
+        gap     = row.get("gap", 0) or 0
+        abs_gap = row.get("abs_gap", abs(gap))
+        signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
+        tier    = 1 if abs_gap >= 0.10 else 2
 
+        try:
+            game_dt = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
+            hours   = round((game_dt - now_utc).total_seconds() / 3600, 1)
+        except Exception:
+            hours = None
+
+        if hours is not None and hours < 0:
+            continue
+        if hours is not None:
             try:
-                game_dt = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
-                hours   = round((game_dt - now_utc).total_seconds() / 3600, 1)
+                if game_dt.astimezone(ET).date() != today_et_date:
+                    continue
             except Exception:
-                hours = None
+                pass
 
-            # Skip games that have already started
-            if hours is not None and hours < 0:
-                continue
+        snapped_tickers.add(row.get("event_ticker", ""))
 
-            # Skip games not starting today (ET date)
-            if hours is not None:
-                try:
-                    if game_dt.astimezone(ET).date() != today_et_date:
-                        continue
-                except Exception:
-                    pass
-
-            if abs_gap >= 0.05 and tier == 1:
-                action = "TRADE ✓"
-            elif abs_gap >= 0.03:
-                action = "WATCH"
-            else:
-                action = "—"
-
-            snap_label = fmt_snap_time(row.get("_snap_time", ""))
-
-            records.append({
-                "Game":          row.get("game", ""),
-                "Game Time":     fmt_game_time(row.get("start_utc", "")),
-                "Kalshi":        fmt_pct(row.get("k_prob")),
-                "Pinnacle":      fmt_pct(row.get("v_prob")),
-                "Gap":           f"{gap * 100:+.1f}%",
-                "Signal":        signal,
-                "Tier":          tier,
-                "Hours to Game": round(hours, 1) if hours is not None else "—",
-                "Action":        action,
-                "Snapped":       snap_label,
-                "_abs_gap":      abs_gap,
-            })
-
-        if not records:
-            st.info("No upcoming games in today's snapshots.")
+        if abs_gap >= 0.05 and tier == 1:
+            action = "TRADE ✓"
+        elif abs_gap >= 0.03:
+            action = "WATCH"
         else:
-            df_snap = (
-                pd.DataFrame(records)
-                .sort_values("_abs_gap", ascending=False)
-                .drop(columns=["_abs_gap"])
-                .reset_index(drop=True)
-            )
+            action = "—"
 
-            st.dataframe(df_snap, use_container_width=True, hide_index=True)
+        records.append({
+            "Game":          row.get("game", ""),
+            "Game Time":     fmt_game_time(row.get("start_utc", "")),
+            "Kalshi":        fmt_pct(row.get("k_prob")),
+            "Pinnacle":      fmt_pct(row.get("v_prob")),
+            "Gap":           f"{gap * 100:+.1f}%",
+            "Signal":        signal,
+            "Tier":          tier,
+            "Hours to Game": round(hours, 1) if hours is not None else "—",
+            "Action":        action,
+            "Snapped":       fmt_snap_time(row.get("_snap_time", "")),
+            "_abs_gap":      abs_gap,
+        })
 
-            n_games  = len(records)
-            t1_ct    = sum(1 for r in records if r["Tier"] == 1)
-            # parse Gap string back to float for the 3% filter
-            def _gap_val(r):
-                try:
-                    return abs(float(r["Gap"].rstrip("%").replace("+", ""))) / 100
-                except Exception:
-                    return 0.0
-            gap3_pct = sum(1 for r in records if _gap_val(r) >= 0.03) / n_games * 100 if n_games else 0
+    # ── Today's full schedule (always visible) ────────────────────────────────
+    schedule = fetch_today_schedule()
+    unsnapped = [g for g in schedule if g["event_ticker"] not in snapped_tickers]
 
-            st.markdown(
-                f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
-                f"{n_games} sides tracked &nbsp;·&nbsp; {t1_ct} Tier 1 signals &nbsp;·&nbsp; "
-                f"{gap3_pct:.0f}% show |gap| ≥ 3% &nbsp;·&nbsp; "
-                f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+    if unsnapped:
+        st.markdown("**Today's Schedule** — awaiting snapshot (fires ~2h before first pitch)")
+        sched_rows = []
+        for g in unsnapped:
+            hrs_away = round((g["start_et"].astimezone(timezone.utc) - now_utc).total_seconds() / 3600, 1)
+            sched_rows.append({
+                "Game":         g["label"],
+                "Start (CT)":   g["start_et"].strftime("%-I:%M %p"),
+                "Hours Away":   hrs_away,
+                "Status":       "Pending snapshot",
+            })
+        st.dataframe(pd.DataFrame(sched_rows), use_container_width=True, hide_index=True)
+        st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+
+    # ── Gap table (games with snapshot data) ──────────────────────────────────
+    if records:
+        st.markdown("**Live Gap Scanner** — Kalshi vs Pinnacle")
+        df_snap = (
+            pd.DataFrame(records)
+            .sort_values("_abs_gap", ascending=False)
+            .drop(columns=["_abs_gap"])
+            .reset_index(drop=True)
+        )
+        st.dataframe(df_snap, use_container_width=True, hide_index=True)
+
+        n_games  = len(records)
+        t1_ct    = sum(1 for r in records if r["Tier"] == 1)
+        def _gap_val(r):
+            try:
+                return abs(float(r["Gap"].rstrip("%").replace("+", ""))) / 100
+            except Exception:
+                return 0.0
+        gap3_pct = sum(1 for r in records if _gap_val(r) >= 0.03) / n_games * 100 if n_games else 0
+        st.markdown(
+            f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
+            f"{n_games} sides tracked &nbsp;·&nbsp; {t1_ct} Tier 1 signals &nbsp;·&nbsp; "
+            f"{gap3_pct:.0f}% show |gap| ≥ 3% &nbsp;·&nbsp; "
+            f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    elif not unsnapped:
+        st.info("No games scheduled for today.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

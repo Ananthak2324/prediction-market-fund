@@ -1,10 +1,10 @@
 {
-  "total_logged": 14,
-  "total_resolved": 6,
-  "total_valid": 2,
-  "total_valid_wins": 2,
+  "total_logged": 15,
+  "total_resolved": 15,
+  "total_valid": 11,
+  "total_valid_wins": 10,
   "total_excluded": 4,
-  "total_open": 8,
+  "total_open": 0,
   "primary_metric": "clean_trades",
   "clean_trades": {
     "resolved": 0,
@@ -15,22 +15,26 @@
     "p_value": null
   },
   "suspect_trades": {
-    "resolved": 2,
-    "wins": 2,
-    "losses": 0,
-    "win_rate": 1.0,
-    "open": 8,
-    "p_value": null
+    "resolved": 11,
+    "wins": 10,
+    "losses": 1,
+    "win_rate": 0.9091,
+    "open": 0,
+    "p_value": 0.0059
   },
-  "win_rate_overall": 1.0,
+  "win_rate_overall": 0.9091,
   "win_rate_tier1": 0.5,
-  "win_rate_tier2": 0.75,
-  "avg_gap_winners": 0.1197,
-  "avg_gap_losers": 0.1395,
-  "p_value": null,
+  "win_rate_tier2": 0.8462,
+  "avg_gap_winners": 0.0901,
+  "avg_gap_losers": 0.1343,
+  "p_value": 0.0059,
   "by_gap_bucket": {
+    "10_15": {
+      "trades": 4,
+      "win_rate": 0.5
+    },
     "5_7": {
-      "trades": 1,
+      "trades": 6,
       "win_rate": 1.0
     },
     "15_plus": {
@@ -38,18 +42,14 @@
       "win_rate": 0.5
     },
     "7_10": {
-      "trades": 2,
+      "trades": 3,
       "win_rate": 1.0
-    },
-    "10_15": {
-      "trades": 1,
-      "win_rate": 0.0
     }
   },
   "by_book": {
     "pinnacle": {
-      "trades": 6,
-      "win_rate": 0.6667
+      "trades": 15,
+      "win_rate": 0.8
     }
   },
   "excluded_trades": [
@@ -88,18 +88,32 @@
       "replacement_flags": []
     }
   ],
-  "last_updated": "2026-06-24T15:44:22.952000+00:00",
+  "last_updated": "2026-06-29T07:00:07.547135+00:00",
   "agent_stats": {
-    "total_evaluated": 0,
+    "total_evaluated": 61,
     "trade_recommendations": 0,
-    "monitor_recommendations": 0,
-    "skip_recommendations": 0,
-    "skip_rate": null,
-    "win_rate_after_agent": null,
-    "win_rate_without_agent": 0.6667,
-    "news_found_rate": null,
-    "pinnacle_unstable_rate": null,
+    "monitor_recommendations": 1,
+    "skip_recommendations": 60,
+    "skip_rate": 0.9836,
+    "win_rate_after_agent": 1.0,
+    "win_rate_without_agent": 0.7857,
+    "news_found_rate": 1.0,
+    "pinnacle_unstable_rate": 0.6721,
     "high_confidence_win_rate": null,
-    "medium_confidence_win_rate": null
+    "medium_confidence_win_rate": null,
+    "shadow_resolved": 0,
+    "shadow_win_rate": null
+  },
+  "portfolio_metrics": {
+    "avg_ev_per_trade": 0.8454,
+    "ev_by_gap_bucket": {
+      "10_15": 0.3895,
+      "5_7": 0.9745,
+      "7_10": 1.142
+    },
+    "sandbox_sharpe": 4.125,
+    "sandbox_max_drawdown": 0.072,
+    "sandbox_total_return_pct": 0.08,
+    "sandbox_closed_trades": 3
   }
 }

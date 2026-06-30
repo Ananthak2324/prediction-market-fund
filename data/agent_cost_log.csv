@@ -1,3 +1,65 @@
 timestamp,game,input_tokens,output_tokens,cache_read_tokens,search_calls,estimated_cost_usd
 2026-06-24 03:33 UTC,Texas Rangers @ Miami Marlins,925,433,2291,0,0.009957
 2026-06-24 03:33 UTC,Texas Rangers @ Miami Marlins,925,466,12684,0,0.01357
+2026-06-24 16:10 UTC,Athletics @ San Francisco Giants,951,533,2291,0,0.011535
+2026-06-24 16:10 UTC,Athletics @ San Francisco Giants,951,491,4582,0,0.011593
+2026-06-25 07:48 UTC,Athletics @ San Francisco Giants,951,446,2291,0,0.01023
+2026-06-25 12:43 UTC,Athletics @ San Francisco Giants,951,473,2291,0,0.010635
+2026-06-25 12:43 UTC,Athletics @ San Francisco Giants,951,504,4582,0,0.011788
+2026-06-25 12:43 UTC,Athletics @ San Francisco Giants,951,497,4582,0,0.011683
+2026-06-25 12:43 UTC,Athletics @ San Francisco Giants,951,462,4582,0,0.011158
+2026-06-25 12:44 UTC,Athletics @ San Francisco Giants,951,522,4582,0,0.012058
+2026-06-25 12:44 UTC,Athletics @ San Francisco Giants,951,510,4582,0,0.011878
+2026-06-25 12:49 UTC,Athletics @ San Francisco Giants,951,493,4582,0,0.011623
+2026-06-25 12:49 UTC,Athletics @ San Francisco Giants,951,477,4582,0,0.011383
+2026-06-25 12:49 UTC,Athletics @ San Francisco Giants,951,513,4582,0,0.011923
+2026-06-25 12:49 UTC,Athletics @ San Francisco Giants,951,438,4582,0,0.010798
+2026-06-25 12:49 UTC,Athletics @ San Francisco Giants,951,459,4582,0,0.011113
+2026-06-25 22:40 UTC,Athletics @ San Francisco Giants,921,502,2291,0,0.01098
+2026-06-25 22:40 UTC,Athletics @ San Francisco Giants,921,539,4582,0,0.012223
+2026-06-25 22:40 UTC,Athletics @ San Francisco Giants,921,490,4582,0,0.011488
+2026-06-25 22:41 UTC,Athletics @ San Francisco Giants,921,490,4582,0,0.011488
+2026-06-25 22:41 UTC,Athletics @ San Francisco Giants,921,510,4582,0,0.011788
+2026-06-25 22:41 UTC,Athletics @ San Francisco Giants,921,530,4582,0,0.012088
+2026-06-25 22:41 UTC,New York Yankees @ Boston Red Sox,955,560,4582,0,0.01264
+2026-06-25 22:42 UTC,New York Yankees @ Boston Red Sox,955,568,4582,0,0.01276
+2026-06-25 22:42 UTC,Houston Astros @ Detroit Tigers,934,748,4582,0,0.015397
+2026-06-25 22:42 UTC,Texas Rangers @ Toronto Blue Jays,957,524,4582,0,0.012106
+2026-06-25 22:42 UTC,Athletics @ San Francisco Giants,921,510,9612,0,0.013297
+2026-06-25 22:42 UTC,Texas Rangers @ Toronto Blue Jays,957,574,4582,0,0.012856
+2026-06-25 22:42 UTC,Athletics @ San Francisco Giants,921,522,9612,0,0.013477
+2026-06-25 22:43 UTC,Athletics @ San Francisco Giants,921,496,9612,0,0.013087
+2026-06-25 22:43 UTC,New York Yankees @ Boston Red Sox,955,551,4582,0,0.012505
+2026-06-25 22:43 UTC,Athletics @ San Francisco Giants,921,507,9612,0,0.013252
+2026-06-25 22:43 UTC,New York Yankees @ Boston Red Sox,955,508,4582,0,0.01186
+2026-06-25 22:43 UTC,Athletics @ San Francisco Giants,921,512,9612,0,0.013327
+2026-06-25 22:43 UTC,Texas Rangers @ Toronto Blue Jays,957,559,4582,0,0.012631
+2026-06-25 22:43 UTC,Athletics @ San Francisco Giants,921,557,9612,0,0.014002
+2026-06-25 22:43 UTC,Texas Rangers @ Toronto Blue Jays,957,519,4582,0,0.012031
+2026-06-25 22:44 UTC,New York Yankees @ Boston Red Sox,955,557,12232,0,0.01489
+2026-06-25 22:44 UTC,New York Yankees @ Boston Red Sox,955,551,12232,0,0.0148
+2026-06-25 22:44 UTC,Houston Astros @ Detroit Tigers,934,601,14307,0,0.016109
+2026-06-25 22:44 UTC,Texas Rangers @ Toronto Blue Jays,957,540,4582,0,0.012346
+2026-06-25 22:45 UTC,Texas Rangers @ Toronto Blue Jays,957,495,4582,0,0.011671
+2026-06-25 22:45 UTC,New York Yankees @ Boston Red Sox,955,508,4582,0,0.01186
+2026-06-25 22:45 UTC,New York Yankees @ Boston Red Sox,955,496,4582,0,0.01168
+2026-06-25 22:45 UTC,Texas Rangers @ Toronto Blue Jays,957,555,4582,0,0.012571
+2026-06-25 22:46 UTC,Texas Rangers @ Toronto Blue Jays,957,553,4582,0,0.012541
+2026-06-26 03:00 UTC,Athletics @ San Francisco Giants,921,441,2291,0,0.010065
+2026-06-26 03:00 UTC,Athletics @ San Francisco Giants,921,547,4582,0,0.012343
+2026-06-26 03:00 UTC,Athletics @ San Francisco Giants,921,505,4582,0,0.011713
+2026-06-26 03:01 UTC,Athletics @ San Francisco Giants,921,482,4582,0,0.011368
+2026-06-26 03:01 UTC,Athletics @ San Francisco Giants,921,443,4582,0,0.010783
+2026-06-26 03:01 UTC,Athletics @ San Francisco Giants,921,482,4582,0,0.011368
+2026-06-26 03:01 UTC,New York Yankees @ Boston Red Sox,955,477,4582,0,0.011395
+2026-06-26 03:01 UTC,New York Yankees @ Boston Red Sox,955,450,4582,0,0.01099
+2026-06-26 03:02 UTC,Texas Rangers @ Toronto Blue Jays,956,598,4582,0,0.013213
+2026-06-26 03:02 UTC,Texas Rangers @ Toronto Blue Jays,956,542,4582,0,0.012373
+2026-06-26 03:02 UTC,New York Yankees @ Boston Red Sox,955,592,4582,0,0.01312
+2026-06-26 03:02 UTC,New York Yankees @ Boston Red Sox,955,582,4582,0,0.01297
+2026-06-26 03:03 UTC,Texas Rangers @ Toronto Blue Jays,957,547,4582,0,0.012451
+2026-06-26 03:03 UTC,Texas Rangers @ Toronto Blue Jays,957,533,4582,0,0.012241
+2026-06-26 03:57 UTC,Athletics @ San Francisco Giants,921,477,2291,0,0.010605
+2026-06-26 03:57 UTC,New York Yankees @ Boston Red Sox,956,649,11636,0,0.016094
+2026-06-26 03:57 UTC,Texas Rangers @ Toronto Blue Jays,957,614,4582,0,0.013456
+2026-06-26 03:57 UTC,New York Yankees @ Boston Red Sox,955,560,4582,0,0.01264

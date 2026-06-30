@@ -115,7 +115,7 @@ def get_well_captured_tickers(games: list[dict]) -> set[str]:
                 hours_before = (start_by_ticker[et] - snap_dt).total_seconds() / 3600
                 if 1.5 <= hours_before <= 2.5:
                     well_captured.add(et)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        except Exception:
             pass
 
     return well_captured
