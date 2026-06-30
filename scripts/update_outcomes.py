@@ -269,7 +269,12 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
 
                 # Run agent before logging — it is the barrier between detection and execution
                 if _AGENT_AVAILABLE:
-                    verdict = _agent_run(_build_agent_game_dict(trade))
+                    try:
+                        verdict = _agent_run(_build_agent_game_dict(trade))
+                    except Exception as _agent_err:
+                        print(f"  [AGENT ERROR] {trade['game']}: {_agent_err} — logging as MONITOR")
+                        verdict = {"recommendation": "MONITOR", "confidence": "LOW",
+                                   "reasoning": f"Agent call failed: {_agent_err}"}
                     rec = verdict.get("recommendation", "MONITOR")
                     trade.update(_agent_fields(verdict))
                     print(f"  [AGENT] {trade['game']} → {rec} ({verdict.get('confidence','?')})")
@@ -315,9 +320,14 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
 
                 # Re-run agent with clean snapshot data if trade is still open
                 if _AGENT_AVAILABLE and old.get("outcome") is None:
-                    verdict = _agent_run(_build_agent_game_dict(trade))
-                    trade.update(_agent_fields(verdict))
-                    print(f"  [AGENT re-eval] {trade['game']} → {verdict.get('recommendation','?')}")
+                    try:
+                        verdict = _agent_run(_build_agent_game_dict(trade))
+                    except Exception as _agent_err:
+                        print(f"  [AGENT re-eval ERROR] {trade['game']}: {_agent_err} — keeping old verdict")
+                        verdict = None
+                    if verdict:
+                        trade.update(_agent_fields(verdict))
+                        print(f"  [AGENT re-eval] {trade['game']} → {verdict.get('recommendation','?')}")
 
                 existing[event_index[event_ticker]] = trade
                 replaced_count += 1
