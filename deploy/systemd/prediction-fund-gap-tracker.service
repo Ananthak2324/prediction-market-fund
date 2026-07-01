@@ -1,0 +1,16 @@
+[Unit]
+Description=Prediction Fund — gap curve tracker (continuous market monitor, MLB + WNBA)
+After=network-online.target
+
+[Service]
+Type=simple
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/gap_curve_tracker.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/opt/prediction-fund/data/gap_tracker.log
+StandardError=append:/opt/prediction-fund/data/gap_tracker_err.log
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,7 @@ rsync -az --timeout=20 \
   --include="performance_summary.json" \
   --include="skipped_trades.json" \
   --include="agent_cost_log.csv" \
+  --include="gap_curves.db" \
   --include="audits/" \
   --include="audits/*.json" \
   --exclude="*" \
