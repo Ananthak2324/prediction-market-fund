@@ -54,8 +54,9 @@ SPORT_KEYS = {
 _last_req_ts: float = 0.0
 
 # Pinnacle data changes slowly (~1-5 updates/hour per game).
-# Cache it for 30 minutes to stay well within the Odds API monthly quota.
-# At 2 sports × 48 refreshes/day = 96 calls/day → ~2,880/month vs. 6,667 limit.
+# Cache it for 30 minutes to reduce round-trips and speed up poll cycles.
+# Odds API limit is 6,667 calls/day (daily reset); uncached we'd use 576/day
+# so quota is not a risk — this is purely a latency/efficiency optimization.
 PINNACLE_CACHE_TTL = int(os.getenv("PINNACLE_CACHE_TTL", "1800"))  # 30 min default
 _pinnacle_cache: dict[str, tuple[float, dict]] = {}  # sport_key → (fetch_ts, index)
 
