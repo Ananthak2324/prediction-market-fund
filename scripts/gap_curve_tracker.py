@@ -53,6 +53,12 @@ SPORT_KEYS = {
 
 _last_req_ts: float = 0.0
 
+# Pinnacle data changes slowly (~1-5 updates/hour per game).
+# Cache it for 30 minutes to stay well within the Odds API monthly quota.
+# At 2 sports × 48 refreshes/day = 96 calls/day → ~2,880/month vs. 6,667 limit.
+PINNACLE_CACHE_TTL = int(os.getenv("PINNACLE_CACHE_TTL", "1800"))  # 30 min default
+_pinnacle_cache: dict[str, tuple[float, dict]] = {}  # sport_key → (fetch_ts, index)
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -161,7 +167,17 @@ def fetch_open_markets(series_ticker: str) -> list[dict]:
 
 
 def fetch_pinnacle(sport_key: str) -> dict[tuple, dict]:
-    """Return {(home, away): {team_name: vf_prob}} for all current Pinnacle lines."""
+    """Return {(home, away): {team_name: vf_prob}} for all current Pinnacle lines.
+
+    Results are cached for PINNACLE_CACHE_TTL seconds (default 30 min) to stay
+    within the Odds API monthly quota. Pinnacle lines move slowly enough that a
+    30-min stale read has negligible impact on gap accuracy.
+    """
+    global _pinnacle_cache
+    cached_ts, cached_data = _pinnacle_cache.get(sport_key, (0.0, {}))
+    if time.time() - cached_ts < PINNACLE_CACHE_TTL:
+        return cached_data
+
     resp = _get(
         f"{ODDS_BASE}/odds/",
         params={
@@ -188,6 +204,8 @@ def fetch_pinnacle(sport_key: str) -> dict[tuple, dict]:
                 continue
             h_vf, a_vf = remove_vig(outcomes[home], outcomes[away])
             index[key] = {home: h_vf, away: a_vf}
+
+    _pinnacle_cache[sport_key] = (time.time(), index)
     return index
 
 
