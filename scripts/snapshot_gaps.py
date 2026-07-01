@@ -115,11 +115,52 @@ def fetch_pinnacle(sport_key: str) -> list[dict]:
     return resp.json().get("data", [])
 
 
+def fetch_retail_books(sport_key: str) -> list[dict]:
+    """Fetch DraftKings and FanDuel in a single API call."""
+    resp = requests.get(
+        f"{ODDS_BASE}/odds/",
+        params={
+            "sport_key":  sport_key,
+            "markets":    "h2h",
+            "bookmakers": "draftkings,fanduel",
+            "oddsFormat": "american",
+        },
+        headers={"x-api-key": ODDS_KEY},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", [])
+
+
+def _build_retail_index(retail_games: list[dict]) -> dict:
+    """Returns {(home, away): {book: {team_name: vf_prob}}}."""
+    index: dict[tuple, dict] = {}
+    for g in retail_games:
+        key = (g["home_team"], g["away_team"])
+        if key in index:
+            continue
+        book_data: dict[str, dict] = {}
+        for bk in g.get("books", []):
+            bname = bk.get("book", "")
+            if bname not in ("draftkings", "fanduel"):
+                continue
+            outcomes = {o["name"]: o["price"] for o in bk.get("outcomes", [])}
+            h, a = g["home_team"], g["away_team"]
+            if h not in outcomes or a not in outcomes:
+                continue
+            h_vf, a_vf = remove_vig(outcomes[h], outcomes[a])
+            book_data[bname] = {h: h_vf, a: a_vf}
+        if book_data:
+            index[key] = book_data
+    return index
+
+
 # ── build snapshot rows ───────────────────────────────────────────────────────
 
 def build_rows(sport: str) -> list[dict]:
-    raw_markets = fetch_kalshi_open(SERIES[sport])
-    vegas_games = fetch_pinnacle(SPORT_KEYS[sport])
+    raw_markets  = fetch_kalshi_open(SERIES[sport])
+    vegas_games  = fetch_pinnacle(SPORT_KEYS[sport])
+    retail_index = _build_retail_index(fetch_retail_books(SPORT_KEYS[sport]))
 
     # Index Vegas by (home, away).
     # Pinnacle sometimes returns the same matchup twice (tonight + tomorrow).
@@ -202,24 +243,34 @@ def build_rows(sport: str) -> list[dict]:
             if _start and _start.astimezone(ZoneInfo("America/New_York")).date() != datetime.now(ZoneInfo("America/New_York")).date():
                 continue
 
+            # DraftKings and FanDuel vig-free probs for this team (null if unavailable)
+            retail_probs = retail_index.get((home_v, away_v), {})
+            dk_vf  = retail_probs.get("draftkings", {}).get(vs_name)
+            fd_vf  = retail_probs.get("fanduel",    {}).get(vs_name)
+
             rows.append({
-                "sport":          sport.upper(),
-                "game":           f"{away_v} @ {home_v}",
-                "team":           vs_name,
-                "side":           "HOME" if is_home else "AWAY",
-                "start_utc":      start_utc,
-                "kalshi_ticker":  s["ticker"],
-                "event_ticker":   s["event_ticker"],
-                "k_prob":         round(k_prob, 4),
-                "k_bid":          float(s.get("yes_bid_dollars") or 0),
-                "k_ask":          float(s.get("yes_ask_dollars") or 0),
-                "v_prob":         round(v_prob, 4),
-                "pinnacle_price": pinnacle_outcomes[vs_name],
-                "gap":            round(gap, 4),
-                "abs_gap":        round(abs(gap), 4),
-                "fav_flag":       fav_flag,
-                "signal":         signal if fav_flag else None,
-                "result":         None,
+                "sport":           sport.upper(),
+                "game":            f"{away_v} @ {home_v}",
+                "team":            vs_name,
+                "side":            "HOME" if is_home else "AWAY",
+                "start_utc":       start_utc,
+                "kalshi_ticker":   s["ticker"],
+                "event_ticker":    s["event_ticker"],
+                "k_prob":          round(k_prob, 4),
+                "k_bid":           float(s.get("yes_bid_dollars") or 0),
+                "k_ask":           float(s.get("yes_ask_dollars") or 0),
+                "v_prob":          round(v_prob, 4),
+                "pinnacle_price":  pinnacle_outcomes[vs_name],
+                "gap":             round(gap, 4),
+                "abs_gap":         round(abs(gap), 4),
+                "fav_flag":        fav_flag,
+                "signal":          signal if fav_flag else None,
+                # Retail book fields (null when book has no pre-game line)
+                "dk_vf_prob":      round(dk_vf,  4) if dk_vf  is not None else None,
+                "dk_gap":          round(k_prob - dk_vf,  4) if dk_vf  is not None else None,
+                "fanduel_vf_prob": round(fd_vf,  4) if fd_vf  is not None else None,
+                "fanduel_gap":     round(k_prob - fd_vf,  4) if fd_vf  is not None else None,
+                "result":          None,
             })
 
     return rows

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <key>Label</key>
+  <string>com.predictionfund.edge_discovery</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
+    <string>/Users/ananthan/Desktop/Prediction Market Fund/agent/edge_discovery_agent.py</string>
+    <string>--sport</string>
+    <string>mlb</string>
+    <string>--upcoming</string>
+    <string>--save</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund</string>
+
+  <!-- Run daily at 9 AM ET (13:00 UTC) — before most game windows open -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>13</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/edge_discovery_out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/ananthan/Desktop/Prediction Market Fund/data/snapshots/edge_discovery_err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/Caskroom/miniconda/base/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+</dict>
+</plist>

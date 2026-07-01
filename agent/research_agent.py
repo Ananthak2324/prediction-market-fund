@@ -75,9 +75,9 @@ PRICE_OUTPUT        = 15.00
 PRICE_PER_SEARCH    = 0.01
 
 
-SYSTEM_PROMPT = f"""You are a sports prediction market research analyst trained by a professional sports bettor with expertise across MLB, NFL, NBA, and soccer.
+_BASE_SYSTEM = f"""You are a sports prediction market research analyst trained by a professional sports bettor with expertise across MLB, NFL, NBA, and soccer.
 
-Your job is to analyze pricing gaps between Vegas sportsbook consensus (Pinnacle) and Kalshi prediction market contracts. When a gap exists, you determine whether it is driven by INFORMATION (a real reason Pinnacle might be stale or wrong) or BEHAVIORAL BIAS (retail sentiment, favorite-longshot bias, name recognition, fan loyalty).
+Your job is to analyze pricing gaps between Vegas sportsbook consensus (Pinnacle) and Kalshi prediction market contracts. You will be given a hypothesis about the type of edge and specific research priorities. Focus your investigation on the provided checklist.
 
 SIGNALS THAT MEAN THE GAP IS INFORMATION-DRIVEN — SKIP:
 - Starting pitcher scratched or changed within 6 hours
@@ -98,43 +98,72 @@ SIGNALS THAT MEAN THE GAP IS BEHAVIORAL — TRADE:
 
 Always weight information signals above behavioral signals. One confirmed injury to a starter overrides any number of behavioral signals pointing to TRADE."""
 
-# Cached system prompt format — cuts input cost 90% after the first call
+# Cached system prompt — cuts input cost 90% after the first call
 _CACHED_SYSTEM = [
     {
         "type":          "text",
-        "text":          SYSTEM_PROMPT,
+        "text":          _BASE_SYSTEM,
         "cache_control": {"type": "ephemeral"},
     }
 ]
 
+# Edge-type framing prepended to user message (not system prompt, so cache stays warm)
+_EDGE_FRAMING = {
+    "MARKET_ANOMALY":       "ANOMALY INVESTIGATION: Gap ≥20%. Find what information is driving this. Default SKIP unless the gap is clearly behavioral.",
+    "SHARP_SIGNAL":         "SHARP SIGNAL: Pinnacle alone diverges. Sharp books move on information first. Default SKIP — only MONITOR if zero news found.",
+    "MULTI_BOOK_CONSENSUS": "CONSENSUS EDGE: All books agree Kalshi is mispriced. Confirm there is NO news justifying Kalshi's price. Default TRADE if clean.",
+    "RETAIL_BOOK_SOFT":     "RETAIL LAG CHECK: DK/FanDuel diverge but Pinnacle agrees with Kalshi. Verify if DK/FanDuel are stale. Default MONITOR.",
+    "BEHAVIORAL_RETAIL":    "BEHAVIORAL EDGE: Kalshi likely reflects retail narrative bias. Identify the narrative and confirm it is not supported by facts. Default TRADE if clean.",
+}
 
-# Sent as the second user turn after search results are in context
-_VERDICT_PROMPT = (
-    "Based on the search results above and all game context provided, apply the decision "
-    "rules from your system prompt and return ONLY this JSON object "
-    "(no preamble, no markdown fences):\n"
-    "{\n"
-    '  "news_found":          true or false,\n'
-    '  "news_detail":         "specific finding or null",\n'
-    '  "news_source":         "url or null",\n'
-    '  "pitcher_confirmed":   true or false or null,\n'
-    '  "weather_issue":       true or false,\n'
-    '  "pinnacle_stable":     true or false,\n'
-    '  "pinnacle_movement":   float or null,\n'
-    '  "gap_type":            "BEHAVIORAL" or "INFORMATIONAL",\n'
-    '  "confidence":          "HIGH" or "MEDIUM" or "LOW",\n'
-    '  "recommendation":      "TRADE" or "SKIP" or "MONITOR",\n'
-    '  "reasoning":           "2-3 sentence plain English explanation",\n'
-    '  "gap_explanation":     "one sentence explaining why the gap exists"\n'
-    "}\n\n"
-    "DECISION RULES (follow exactly):\n"
-    "  SKIP   — any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
-    f"  HIGH confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-    f"weather_issue=false, abs_gap >= {TIER1_MIN_GAP}, tier == 1\n"
-    f"  MEDIUM confidence TRADE — all of: news_found=false, pinnacle_stable=true, "
-    f"weather_issue=false, abs_gap >= {TIER2_MIN_GAP}, tier == 2\n"
-    "  MONITOR — everything else that is not SKIP"
-)
+_DEFAULT_EDGE_CONTEXT: dict = {
+    "edge_type":          "BEHAVIORAL_RETAIL",
+    "edge_confidence":    "LOW",
+    "supporting_evidence": [],
+    "risk_factors":       [],
+    "research_priorities": ["Standard news/injury/weather check"],
+    "initial_lean":       "MONITOR",
+}
+
+
+def _build_verdict_prompt(edge_context: dict) -> str:
+    """Build the second-turn JSON verdict prompt with edge-type-specific decision rules."""
+    edge_type = edge_context.get("edge_type", "BEHAVIORAL_RETAIL")
+    initial_lean = edge_context.get("initial_lean", "MONITOR")
+    rules = {
+        "MARKET_ANOMALY":       "SKIP unless you found a specific behavioral reason for the gap. MONITOR if inconclusive.",
+        "SHARP_SIGNAL":         "SKIP by default. MONITOR only if zero news found and line appears stale. Never TRADE a sharp signal.",
+        "MULTI_BOOK_CONSENSUS": "TRADE if no disqualifying news. SKIP if real news explains the Kalshi price.",
+        "RETAIL_BOOK_SOFT":     "MONITOR — only TRADE if DK/FanDuel confirmed stale with a specific reason.",
+        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and no disqualifying news. SKIP if injury/news/weather found.",
+    }
+    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and clean. SKIP if news found.")
+
+    return (
+        "Based on the search results above and all game context provided, return ONLY this JSON object "
+        "(no preamble, no markdown fences):\n"
+        "{\n"
+        '  "news_found":          true or false,\n'
+        '  "news_detail":         "specific finding or null",\n'
+        '  "news_source":         "url or null",\n'
+        '  "pitcher_confirmed":   true or false or null,\n'
+        '  "weather_issue":       true or false,\n'
+        '  "pinnacle_stable":     true or false,\n'
+        '  "pinnacle_movement":   float or null,\n'
+        '  "gap_type":            "BEHAVIORAL" or "INFORMATIONAL",\n'
+        '  "confidence":          "HIGH" or "MEDIUM" or "LOW",\n'
+        '  "recommendation":      "TRADE" or "SKIP" or "MONITOR",\n'
+        '  "reasoning":           "2-3 sentence plain English explanation",\n'
+        '  "gap_explanation":     "one sentence explaining why the gap exists"\n'
+        "}\n\n"
+        f"EDGE TYPE: {edge_type}  |  Initial data lean: {initial_lean}\n"
+        f"Edge-specific decision rule: {rule}\n\n"
+        "Override rules (always apply regardless of edge type):\n"
+        "  SKIP if any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
+        f"  HIGH confidence TRADE: news_found=false, pinnacle_stable=true, weather_issue=false, abs_gap >= {TIER1_MIN_GAP}\n"
+        f"  MEDIUM confidence TRADE: news_found=false, pinnacle_stable=true, weather_issue=false, abs_gap >= {TIER2_MIN_GAP}\n"
+        "  MONITOR: everything else that is not SKIP"
+    )
 
 
 # ── Pinnacle stability check ───────────────────────────────────────────────────
@@ -255,7 +284,9 @@ def _build_user_message(
     current_pinnacle: float | None,
     pinnacle_movement: float | None,
     pinnacle_stable: bool,
+    edge_context: dict | None = None,
 ) -> str:
+    ec           = edge_context or _DEFAULT_EDGE_CONTEXT
     home         = game_dict.get("home_team", "")
     away         = game_dict.get("away_team", "")
     date         = game_dict.get("date", "")
@@ -268,6 +299,20 @@ def _build_user_message(
     tier         = game_dict.get("tier", 2)
     signal       = game_dict.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")
     hours_before = game_dict.get("hours_before_game")
+
+    # Edge hypothesis block (edge-type-specific framing + research checklist)
+    framing     = _EDGE_FRAMING.get(ec["edge_type"], "")
+    evidence    = "\n".join(f"  - {e}" for e in ec.get("supporting_evidence", []))
+    risks       = "\n".join(f"  - {r}" for r in ec.get("risk_factors", []))
+    priorities  = "\n".join(f"  - {p}" for p in ec.get("research_priorities", []))
+    edge_block  = (
+        f"EDGE TYPE: {ec['edge_type']} ({ec.get('edge_confidence','?')} confidence) "
+        f"— initial data lean: {ec.get('initial_lean','MONITOR')}\n"
+        f"{framing}\n\n"
+        + (f"Supporting evidence:\n{evidence}\n\n" if evidence else "")
+        + (f"Risk factors:\n{risks}\n\n" if risks else "")
+        + (f"RESEARCH CHECKLIST (address each point):\n{priorities}\n\n" if priorities else "")
+    )
 
     timing_note = ""
     if isinstance(hours_before, (int, float)) and hours_before > 3.0:
@@ -301,12 +346,10 @@ def _build_user_message(
             f"(now {current_pinnacle:.1%})."
         )
 
-    # Single combined search query (Fix 2 — was 4 separate queries)
-    search_query = (
-        f"{home} {away} starting pitcher lineup injury scratch {date}"
-    )
+    search_query = f"{home} {away} starting pitcher lineup injury scratch {date}"
 
     return (
+        f"{edge_block}"
         f"Analyze this {sport} prediction market gap.\n\n"
         f"Game:   {away} @ {home}\n"
         f"Date:   {date}  ({game_time})\n"
@@ -409,10 +452,13 @@ def _print_and_log_cost(
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
-def run(game_dict: dict) -> dict:
+def run(game_dict: dict, edge_context: dict | None = None) -> dict:
     """
     Evaluate a flagged trade. Returns a verdict dict.
     Never raises — defaults to MONITOR on any error.
+
+    edge_context: output of classify_edge() from edge_discovery_agent. If None,
+    falls back to BEHAVIORAL_RETAIL defaults (backward compatible).
     """
     try:
         import anthropic as _anthropic
@@ -421,6 +467,8 @@ def run(game_dict: dict) -> dict:
 
     if not ANTHROPIC_KEY:
         return _default_verdict("ANTHROPIC_API_KEY not set in .env")
+
+    ec = edge_context or _DEFAULT_EDGE_CONTEXT
 
     # Step 1: Pinnacle stability (fast check before burning API tokens)
     current_pinnacle, pinnacle_movement = _fetch_current_pinnacle(game_dict)
@@ -431,7 +479,7 @@ def run(game_dict: dict) -> dict:
 
     # Step 2: Build research prompt
     user_msg = _build_user_message(
-        game_dict, current_pinnacle, pinnacle_movement, pinnacle_stable
+        game_dict, current_pinnacle, pinnacle_movement, pinnacle_stable, ec
     )
 
     # Step 3: Call Claude with web_search + cached system prompt
@@ -497,7 +545,7 @@ def run(game_dict: dict) -> dict:
 
         # Turn 2: search results are now in context — ask for JSON verdict
         messages.append({"role": "assistant", "content": _truncate_content_blocks(response.content)})
-        messages.append({"role": "user", "content": _VERDICT_PROMPT})
+        messages.append({"role": "user", "content": _build_verdict_prompt(ec)})
         response = _make_api_call(messages)
         _accumulate(response)
 
