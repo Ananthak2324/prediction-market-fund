@@ -59,6 +59,152 @@ LOG_FILE    = os.path.join(BASE, "data", "snapshots", "edge_discovery_log.txt")
 ET          = ZoneInfo("America/New_York")
 
 
+# ── paper-trade wiring ────────────────────────────────────────────────────────
+
+TRADES_FILE  = os.path.join(BASE, "data", "paper_trades.json")
+SKIPPED_FILE = os.path.join(BASE, "data", "skipped_trades.json")
+
+
+def _make_trade_record(c: dict, snap_time: str) -> dict:
+    """Convert an edge discovery candidate + research verdict into paper_trades.json format."""
+    abs_gap = c.get("best_abs_gap") or abs(c.get("gap") or 0)
+    hours   = c.get("hours_before_game") or c.get("hours_until") or 0
+    verdict = c.get("research", {})
+    return {
+        "trade_id":           f"{snap_time}|{c.get('event_ticker', '')}",
+        "snapshot_time":      snap_time,
+        "snapshot_file":      f"edge_discovery_{c.get('sport','').lower()}_{snap_time[:10]}.json",
+        "sport":              c.get("sport", ""),
+        "game":               c.get("game", ""),
+        "team":               c.get("team", ""),
+        "side":               c.get("side", ""),
+        "start_utc":          c.get("start_utc", ""),
+        "kalshi_ticker":      c.get("kalshi_ticker", ""),
+        "event_ticker":       c.get("event_ticker", ""),
+        "k_prob":             c.get("k_prob"),
+        "k_bid":              None,
+        "k_ask":              None,
+        "spread":             None,
+        "v_prob":             c.get("v_prob") or c.get("pinnacle_prob"),
+        "gap":                c.get("gap"),
+        "abs_gap":            round(abs_gap, 4),
+        "signal":             c.get("signal"),
+        "book":               c.get("best_book", "pinnacle"),
+        "hours_before_game":  round(hours, 2),
+        "timing_suspect":     hours > 3.0,
+        "valid_for_analysis": True,
+        "replacement_flags":  [],
+        "agent_verdict":      verdict.get("recommendation"),
+        "agent_confidence":   verdict.get("confidence"),
+        "agent_reasoning":    verdict.get("reasoning"),
+        "gap_explanation":    verdict.get("gap_explanation"),
+        "gap_type":           verdict.get("gap_type"),
+        "news_found":         verdict.get("news_found"),
+        "news_detail":        verdict.get("news_detail"),
+        "news_source":        verdict.get("news_source"),
+        "pitcher_confirmed":  verdict.get("pitcher_confirmed"),
+        "weather_issue":      verdict.get("weather_issue"),
+        "pinnacle_stable":    verdict.get("pinnacle_stable"),
+        "pinnacle_movement":  verdict.get("pinnacle_movement"),
+        "outcome":            None,
+        "correct":            None,
+        "resolution_price":   None,
+        "resolved_at":        None,
+    }
+
+
+def _log_edge_trades(trade_signals: list[dict], skip_signals: list[dict], snap_time: str) -> None:
+    """
+    Persist TRADE and SKIP verdicts from edge discovery.
+
+    TRADE → appended to paper_trades.json, sandbox position opened, iMessage sent.
+    SKIP  → appended to skipped_trades.json only.
+    Deduplication is by event_ticker — same game won't be logged twice.
+    """
+    # ── Load existing trades and build dedup index ─────────────────────────
+    existing: list[dict] = []
+    if os.path.exists(TRADES_FILE):
+        try:
+            with open(TRADES_FILE) as f:
+                existing = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    event_index = {t["event_ticker"]: i for i, t in enumerate(existing)}
+
+    # ── SKIP verdicts → skipped_trades.json ───────────────────────────────
+    if skip_signals:
+        skipped: list[dict] = []
+        if os.path.exists(SKIPPED_FILE):
+            try:
+                with open(SKIPPED_FILE) as f:
+                    skipped = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        for c in skip_signals:
+            record  = _make_trade_record(c, snap_time)
+            verdict = c.get("research", {})
+            skipped.append({
+                k: record.get(k)
+                for k in ("trade_id", "event_ticker", "kalshi_ticker", "game", "team",
+                          "signal", "gap", "abs_gap", "start_utc", "snapshot_time",
+                          "hours_before_game", "timing_suspect")
+            } | {
+                "skipped_at":        datetime.now(timezone.utc).isoformat(),
+                "agent_reasoning":   verdict.get("reasoning"),
+                "news_found":        verdict.get("news_found"),
+                "news_detail":       verdict.get("news_detail"),
+                "pinnacle_stable":   verdict.get("pinnacle_stable"),
+                "pinnacle_movement": verdict.get("pinnacle_movement"),
+                "weather_issue":     verdict.get("weather_issue"),
+            })
+            _log(f"  [SKIP LOGGED] {c['game']} — {c['team']}")
+        os.makedirs(os.path.dirname(SKIPPED_FILE), exist_ok=True)
+        with open(SKIPPED_FILE, "w") as f:
+            json.dump(skipped, f, indent=2)
+
+    # ── TRADE verdicts → paper_trades.json + sandbox + iMessage ──────────
+    for c in trade_signals:
+        et = c.get("event_ticker", "")
+        if et in event_index:
+            _log(f"  [TRADE] Already logged, skipping duplicate: {c['game']} — {c['team']}")
+            continue
+
+        record = _make_trade_record(c, snap_time)
+        existing.append(record)
+        event_index[et] = len(existing) - 1
+
+        os.makedirs(os.path.dirname(TRADES_FILE), exist_ok=True)
+        with open(TRADES_FILE, "w") as f:
+            json.dump(existing, f, indent=2)
+
+        _log(f"  [TRADE LOGGED] {c['game']} — {c['team']} | {c['signal']} "
+             f"| gap={c.get('best_abs_gap', 0):.1%} | {c.get('best_book','').upper()}")
+
+        try:
+            from execution.position_manager import open_sandbox_position
+            open_sandbox_position(record)
+        except Exception as _sb_err:
+            _log(f"  [SANDBOX] {c['game']}: {_sb_err}")
+
+        try:
+            from core.notifications import send_imessage
+            abs_gap = c.get("best_abs_gap") or abs(c.get("gap") or 0)
+            tier    = 1 if abs_gap >= TIER1_GAP else 2
+            gap     = c.get("gap") or 0
+            verdict = c.get("research", {})
+            msg = (
+                f"\U0001F7E2 TRADE LOGGED (Edge Discovery)\n"
+                f"{c.get('game', '')}\n"
+                f"{c.get('signal', '')} {c.get('team', '')}  |  Tier {tier}\n"
+                f"Kalshi {c.get('k_prob', 0):.1%}  vs  Pinnacle {(c.get('v_prob') or 0):.1%}"
+                f"   (gap {gap:+.1%})\n"
+                f"Agent: TRADE ({verdict.get('confidence', '?')})"
+            )
+            send_imessage(msg)
+        except Exception as _notify_err:
+            _log(f"  [NOTIFY] {c['game']}: {_notify_err}")
+
+
 # ── fetch helpers ─────────────────────────────────────────────────────────────
 
 def fetch_kalshi_markets(series: str) -> list[dict]:
@@ -511,6 +657,7 @@ def _run_sport(
                  f"{rec} ({conf}) via {c['best_book'].upper()}")
 
         trades = [v for v in verdicts if v["research"].get("recommendation") == "TRADE"]
+        skips  = [v for v in verdicts if v["research"].get("recommendation") == "SKIP"]
         if trades:
             print(f"\n  ★ TRADE SIGNALS ({len(trades)}):")
             for t in trades:
@@ -519,6 +666,9 @@ def _run_sport(
                       f"| Tier {t['tier']} | {t['research']['confidence']}")
         else:
             print(f"\n  No TRADE signals after research.")
+
+        snap_time = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
+        _log_edge_trades(trades, skips, snap_time)
 
     elif above:
         print(f"\n  [--no-research] Skipping research agent.")
