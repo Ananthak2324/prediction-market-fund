@@ -1,0 +1,10 @@
+[Unit]
+Description=Run prediction-fund-edge-discovery daily at 1 PM UTC (9 AM ET)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

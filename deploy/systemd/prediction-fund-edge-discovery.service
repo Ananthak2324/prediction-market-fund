@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — edge discovery agent (triggered by prediction-fund-edge-discovery.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 agent/edge_discovery_agent.py --sport mlb --upcoming --save
+StandardOutput=append:/opt/prediction-fund/data/snapshots/edge_discovery_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/edge_discovery_err.log
