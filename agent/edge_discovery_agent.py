@@ -14,6 +14,7 @@ Usage:
     python agent/edge_discovery_agent.py --sport mlb --date 2026-07-01
     python agent/edge_discovery_agent.py --sport nba --upcoming --no-research
     python agent/edge_discovery_agent.py --sport mlb --upcoming --save
+    python agent/edge_discovery_agent.py --all-sports --upcoming --save
 """
 import argparse
 import json
@@ -39,14 +40,16 @@ ODDS_BASE   = os.getenv("ODDS_API_BASE",   "https://api.theoddsapi.com")
 ODDS_KEY    = os.getenv("ODDS_API_KEY",    "")
 
 SERIES = {
-    "mlb": "KXMLBGAME",
-    "nba": "KXNBAGAME",
-    "nfl": "KXNFLGAME",
+    "mlb":  "KXMLBGAME",
+    "nba":  "KXNBAGAME",
+    "nfl":  "KXNFLGAME",
+    "wnba": "KXWNBAGAME",
 }
 SPORT_KEYS = {
-    "mlb": "baseball_mlb",
-    "nba": "basketball_nba",
-    "nfl": "americanfootball_nfl",
+    "mlb":  "baseball_mlb",
+    "nba":  "basketball_nba",
+    "nfl":  "americanfootball_nfl",
+    "wnba": "basketball_wnba",
 }
 ALL_BOOKS   = ["pinnacle", "draftkings", "fanduel"]
 MIN_GAP     = 0.05   # tier 2 threshold — anything below this isn't a candidate
@@ -463,42 +466,29 @@ def classify_edge(candidate: dict) -> dict:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Multi-book Kalshi edge scanner")
-    parser.add_argument("--sport",       default="mlb", choices=list(SERIES.keys()))
-    parser.add_argument("--date",        default=None,
-                        help="Scan games on this date (YYYY-MM-DD). Defaults to today.")
-    parser.add_argument("--upcoming",    action="store_true",
-                        help="Scan all of today's open games (same as omitting --date).")
-    parser.add_argument("--no-research", action="store_true",
-                        help="Print gap matrix only; do not call research agent.")
-    parser.add_argument("--save",        action="store_true",
-                        help="Save results to outputs/edge_discovery_YYYY-MM-DD.json")
-    args = parser.parse_args()
-
-    filter_date = None
-    if args.date:
-        filter_date = date.fromisoformat(args.date)
-
-    sport = args.sport.lower()
+def _run_sport(
+    sport: str,
+    filter_date: date | None,
+    no_research: bool,
+    save: bool,
+) -> None:
+    """Run edge discovery for a single sport."""
     _log(f"Edge discovery started — sport={sport.upper()} "
-         f"date={filter_date or 'today'} research={'off' if args.no_research else 'on'}")
+         f"date={filter_date or 'today'} research={'off' if no_research else 'on'}")
 
-    # Fetch and compute
     print(f"\nFetching Kalshi markets and book lines for {sport.upper()}...", flush=True)
     try:
         candidates = compute_gap_matrix(sport, filter_date)
     except Exception as e:
-        _log(f"ERROR fetching data: {e}")
-        raise
+        _log(f"ERROR fetching {sport.upper()} data: {e}")
+        return
 
     print_gap_matrix(candidates, sport)
 
-    # Research any candidates above threshold
     above = [c for c in candidates if c["best_abs_gap"] >= MIN_GAP]
     verdicts: list[dict] = []
 
-    if above and not args.no_research:
+    if above and not no_research:
         print(f"\n  Running research agent on {len(above)} candidate(s)...\n")
         try:
             from agent import research_agent
@@ -520,7 +510,6 @@ def main() -> None:
             _log(f"  {c['game']} | {c['team']} | gap={c['best_abs_gap']:.1%} | "
                  f"{rec} ({conf}) via {c['best_book'].upper()}")
 
-        # Summarize tradeable
         trades = [v for v in verdicts if v["research"].get("recommendation") == "TRADE"]
         if trades:
             print(f"\n  ★ TRADE SIGNALS ({len(trades)}):")
@@ -535,11 +524,10 @@ def main() -> None:
         print(f"\n  [--no-research] Skipping research agent.")
         verdicts = candidates
 
-    # Save
-    if args.save:
+    if save:
         out_dir = os.path.join(BASE, "outputs")
         os.makedirs(out_dir, exist_ok=True)
-        fname = os.path.join(out_dir, f"edge_discovery_{filter_date or date.today()}.json")
+        fname = os.path.join(out_dir, f"edge_discovery_{sport}_{filter_date or date.today()}.json")
         with open(fname, "w") as f:
             json.dump({
                 "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -549,8 +537,33 @@ def main() -> None:
             }, f, indent=2, default=str)
         print(f"\n  Saved to {fname}")
 
-    _log(f"Edge discovery complete — {len(above)} candidate(s), "
-         f"{len([v for v in verdicts if isinstance(v, dict) and v.get('research', {}).get('recommendation') == 'TRADE'])} TRADE signal(s)")
+    trade_ct = len([v for v in verdicts if isinstance(v, dict) and v.get("research", {}).get("recommendation") == "TRADE"])
+    _log(f"Edge discovery complete [{sport.upper()}] — {len(above)} candidate(s), {trade_ct} TRADE signal(s)")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Multi-book Kalshi edge scanner")
+    parser.add_argument("--sport",       default="mlb", choices=list(SERIES.keys()))
+    parser.add_argument("--all-sports",  action="store_true",
+                        help="Scan all configured sports (MLB + WNBA + NBA). Overrides --sport.")
+    parser.add_argument("--date",        default=None,
+                        help="Scan games on this date (YYYY-MM-DD). Defaults to today.")
+    parser.add_argument("--upcoming",    action="store_true",
+                        help="Scan all of today's open games (same as omitting --date).")
+    parser.add_argument("--no-research", action="store_true",
+                        help="Print gap matrix only; do not call research agent.")
+    parser.add_argument("--save",        action="store_true",
+                        help="Save results to outputs/edge_discovery_<sport>_YYYY-MM-DD.json")
+    args = parser.parse_args()
+
+    filter_date = None
+    if args.date:
+        filter_date = date.fromisoformat(args.date)
+
+    sports_to_scan = list(SERIES.keys()) if args.all_sports else [args.sport.lower()]
+
+    for sport in sports_to_scan:
+        _run_sport(sport, filter_date, args.no_research, args.save)
 
 
 if __name__ == "__main__":

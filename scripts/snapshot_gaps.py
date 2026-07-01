@@ -39,8 +39,8 @@ KALSHI_BASE = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/tra
 ODDS_BASE   = os.getenv("ODDS_API_BASE",   "https://api.theoddsapi.com")
 ODDS_KEY    = os.getenv("ODDS_API_KEY",    "")
 
-SERIES     = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME"}
-SPORT_KEYS = {"mlb": "baseball_mlb", "nba": "basketball_nba"}
+SERIES     = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME", "wnba": "KXWNBAGAME"}
+SPORT_KEYS = {"mlb": "baseball_mlb", "nba": "basketball_nba", "wnba": "basketball_wnba"}
 
 SNAPSHOT_DIR = "data/snapshots"
 MASTER_LOG   = os.path.join(SNAPSHOT_DIR, "master_log.json")
@@ -337,11 +337,14 @@ def print_snapshot(rows: list[dict], ts: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sport", choices=["mlb", "nba", "both"], default="both")
+    parser.add_argument("--sport", choices=["mlb", "nba", "wnba", "both", "all"], default="all")
     parser.add_argument("--dry-run", action="store_true", help="Print only, don't save")
     args = parser.parse_args()
 
-    sports = ["mlb", "nba"] if args.sport == "both" else [args.sport]
+    if args.sport in ("both", "all"):
+        sports = list(SERIES.keys())
+    else:
+        sports = [args.sport]
     ts     = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
 
     all_rows: list[dict] = []

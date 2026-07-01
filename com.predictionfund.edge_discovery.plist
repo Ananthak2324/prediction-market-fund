@@ -11,8 +11,7 @@
   <array>
     <string>/opt/homebrew/Caskroom/miniconda/base/bin/python3</string>
     <string>/Users/ananthan/Desktop/Prediction Market Fund/agent/edge_discovery_agent.py</string>
-    <string>--sport</string>
-    <string>mlb</string>
+    <string>--all-sports</string>
     <string>--upcoming</string>
     <string>--save</string>
   </array>
@@ -20,14 +19,28 @@
   <key>WorkingDirectory</key>
   <string>/Users/ananthan/Desktop/Prediction Market Fund</string>
 
-  <!-- Run daily at 9 AM ET (13:00 UTC) — before most game windows open -->
+  <!-- Run 3x daily: 9 AM, noon, 3 PM ET (13:00, 16:00, 19:00 UTC) -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>13</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>13</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>16</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>19</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
 
   <key>RunAtLoad</key>
   <false/>

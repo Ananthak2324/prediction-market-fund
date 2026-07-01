@@ -267,9 +267,9 @@ def scrow(key: str, val: str, val_style: str = "") -> str:
 
 
 @st.cache_data(ttl=300)
-def fetch_today_schedule() -> list[dict]:
+def fetch_today_schedule(series_ticker: str = "KXMLBGAME") -> list[dict]:
     """
-    Fetch today's MLB games from Kalshi (display-only, no Pinnacle needed).
+    Fetch today's games from Kalshi for a given series (display-only, no Pinnacle needed).
     Returns [{event_ticker, label, start_et, start_utc}] sorted by start time.
     Cached 5 min. Returns [] on any error.
     """
@@ -282,7 +282,7 @@ def fetch_today_schedule() -> list[dict]:
     try:
         resp = requests.get(
             f"{KALSHI_BASE}/events",
-            params={"series_ticker": "KXMLBGAME", "status": "open", "limit": 200},
+            params={"series_ticker": series_ticker, "status": "open", "limit": 200},
             timeout=10,
         )
         resp.raise_for_status()
@@ -390,20 +390,23 @@ for col, label, val, sub in _cards:
 st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📡 Live Gaps", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"])
+tab_mlb, tab_wnba, tab_log, tab_perf, tab_sandbox, tab_sys = st.tabs([
+    "⚾ MLB", "🏀 WNBA", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"
+])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — LIVE GAP SCANNER
+# TAB — MLB LIVE GAP SCANNER
 # ══════════════════════════════════════════════════════════════════════════════
-with tab1:
+with tab_mlb:
     now_utc       = datetime.now(timezone.utc)
     today_et_date = now_utc.astimezone(ET).date()
 
     # ── Build gap records from today's snapshots ──────────────────────────────
     records = []
     snapped_tickers: set[str] = set()
-    for row in all_recent_rows:
+    mlb_rows = [r for r in all_recent_rows if r.get("sport", "MLB") == "MLB"]
+    for row in mlb_rows:
         gap     = row.get("gap", 0) or 0
         abs_gap = row.get("abs_gap", abs(gap))
         signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
@@ -497,9 +500,111 @@ with tab1:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — PAPER TRADE LOG
+# TAB — WNBA LIVE GAP SCANNER
 # ══════════════════════════════════════════════════════════════════════════════
-with tab2:
+with tab_wnba:
+    now_utc_w       = datetime.now(timezone.utc)
+    today_et_date_w = now_utc_w.astimezone(ET).date()
+
+    wnba_rows = [r for r in all_recent_rows if r.get("sport") == "WNBA"]
+    records_w = []
+    snapped_tickers_w: set[str] = set()
+
+    for row in wnba_rows:
+        gap     = row.get("gap", 0) or 0
+        abs_gap = row.get("abs_gap", abs(gap))
+        signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
+        tier    = 1 if abs_gap >= 0.10 else 2
+
+        try:
+            game_dt = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
+            hours   = round((game_dt - now_utc_w).total_seconds() / 3600, 1)
+        except Exception:
+            hours = None
+
+        if hours is not None and hours < 0:
+            continue
+        if hours is not None:
+            try:
+                if game_dt.astimezone(ET).date() != today_et_date_w:
+                    continue
+            except Exception:
+                pass
+
+        snapped_tickers_w.add(row.get("event_ticker", ""))
+
+        if abs_gap >= 0.05 and tier == 1:
+            action = "TRADE ✓"
+        elif abs_gap >= 0.03:
+            action = "WATCH"
+        else:
+            action = "—"
+
+        records_w.append({
+            "Game":          row.get("game", ""),
+            "Game Time":     fmt_game_time(row.get("start_utc", "")),
+            "Kalshi":        fmt_pct(row.get("k_prob")),
+            "Pinnacle":      fmt_pct(row.get("v_prob")),
+            "Gap":           f"{gap * 100:+.1f}%",
+            "Signal":        signal,
+            "Tier":          tier,
+            "Hours to Game": round(hours, 1) if hours is not None else "—",
+            "Action":        action,
+            "Snapped":       fmt_snap_time(row.get("_snap_time", "")),
+            "_abs_gap":      abs_gap,
+        })
+
+    schedule_w = fetch_today_schedule("KXWNBAGAME")
+    unsnapped_w = [g for g in schedule_w if g["event_ticker"] not in snapped_tickers_w]
+
+    if unsnapped_w:
+        st.markdown("**Today's Schedule** — awaiting snapshot (fires ~2h before tip-off)")
+        sched_rows_w = []
+        for g in unsnapped_w:
+            hrs_away = round((g["start_et"].astimezone(timezone.utc) - now_utc_w).total_seconds() / 3600, 1)
+            sched_rows_w.append({
+                "Game":       g["label"],
+                "Start (CT)": g["start_et"].strftime("%-I:%M %p"),
+                "Hours Away": hrs_away,
+                "Status":     "Pending snapshot",
+            })
+        st.dataframe(pd.DataFrame(sched_rows_w), use_container_width=True, hide_index=True)
+        st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
+
+    if records_w:
+        st.markdown("**Live Gap Scanner** — Kalshi vs Pinnacle")
+        df_snap_w = (
+            pd.DataFrame(records_w)
+            .sort_values("_abs_gap", ascending=False)
+            .drop(columns=["_abs_gap"])
+            .reset_index(drop=True)
+        )
+        st.dataframe(df_snap_w, use_container_width=True, hide_index=True)
+
+        n_games_w  = len(records_w)
+        t1_ct_w    = sum(1 for r in records_w if r["Tier"] == 1)
+        def _gap_val_w(r):
+            try:
+                return abs(float(r["Gap"].rstrip("%").replace("+", ""))) / 100
+            except Exception:
+                return 0.0
+        gap3_pct_w = sum(1 for r in records_w if _gap_val_w(r) >= 0.03) / n_games_w * 100 if n_games_w else 0
+        st.markdown(
+            f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
+            f"{n_games_w} sides tracked &nbsp;·&nbsp; {t1_ct_w} Tier 1 signals &nbsp;·&nbsp; "
+            f"{gap3_pct_w:.0f}% show |gap| ≥ 3% &nbsp;·&nbsp; "
+            f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    elif not unsnapped_w:
+        st.info("No WNBA games scheduled for today.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB — PAPER TRADE LOG
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_log:
     if trades_df.empty:
         st.info("No trades logged yet. Snapshot script is running.")
     else:
@@ -618,9 +723,9 @@ with tab2:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — PERFORMANCE
+# TAB — PERFORMANCE
 # ══════════════════════════════════════════════════════════════════════════════
-with tab3:
+with tab_perf:
     r1c1, r1c2 = st.columns(2)
 
     # ── Win Rate Over Time ────────────────────────────────────────────────────
@@ -796,9 +901,9 @@ with tab3:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — SANDBOX PORTFOLIO
+# TAB — SANDBOX PORTFOLIO
 # ══════════════════════════════════════════════════════════════════════════════
-with tab4:
+with tab_sandbox:
     import sqlite3 as _sqlite3
 
     _DB = _p("data", "paper_trades.db")
@@ -1138,9 +1243,9 @@ with tab4:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — SYSTEM STATUS
+# TAB — SYSTEM STATUS
 # ══════════════════════════════════════════════════════════════════════════════
-with tab5:
+with tab_sys:
     # Precompute values used across multiple cards
     today_snaps    = [f for f in all_snap_files if os.path.basename(f).startswith(today_str)]
     n_snap_days    = len(set(os.path.basename(f)[:10] for f in all_snap_files))
@@ -1345,7 +1450,7 @@ with tab5:
 st.markdown(
     f"<div class='ef-footer'>"
     f"<span>EdgeFund &nbsp;·&nbsp; Paper Trading Mode &nbsp;·&nbsp; Not financial advice</span>"
-    f"<span>MLB 2026 &nbsp;·&nbsp; Benchmark: Pinnacle &nbsp;·&nbsp; Threshold: |gap| ≥ 5%"
+    f"<span>MLB + WNBA 2026 &nbsp;·&nbsp; Benchmark: Pinnacle &nbsp;·&nbsp; Threshold: |gap| ≥ 5%"
     f"&nbsp;&nbsp;|&nbsp;&nbsp;Last refresh: {datetime.now(ET).strftime('%-I:%M:%S %p CT')}</span>"
     f"</div>",
     unsafe_allow_html=True,
