@@ -11,7 +11,7 @@
 set -euo pipefail
 
 VPS_USER="predfund"
-VPS_HOST="REPLACE_WITH_VPS_IP_OR_HOSTNAME"
+VPS_HOST="34.134.239.151"
 VPS_DATA_DIR="/opt/prediction-fund/data"
 SSH_KEY="$HOME/.ssh/id_ed25519_predfund"
 LOCAL_DATA_DIR="/Users/ananthan/Desktop/Prediction Market Fund/data"
