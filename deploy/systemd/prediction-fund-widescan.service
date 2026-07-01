@@ -1,0 +1,11 @@
+[Unit]
+Description=Prediction Fund — wide market scan (all open Kalshi markets, all sports)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/snapshot_gaps.py --sport all
+StandardOutput=append:/opt/prediction-fund/data/snapshots/widescan.log
+StandardError=append:/opt/prediction-fund/data/snapshots/widescan.log
