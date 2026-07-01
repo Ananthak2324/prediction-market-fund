@@ -266,6 +266,34 @@ def scrow(key: str, val: str, val_style: str = "") -> str:
     return f"<div class='scrow'><span class='sckey'>{key}</span><span class='scval'{style}>{val}</span></div>"
 
 
+@st.cache_data(ttl=60)
+def load_gap_curves_db(sport_filter: str = "all", hours_window: int = 48) -> pd.DataFrame:
+    """Load gap_curves.db rows from the past `hours_window` hours."""
+    import sqlite3 as _sqlite3
+    from datetime import timedelta
+    db_path = _p("data", "gap_curves.db")
+    if not os.path.exists(db_path):
+        return pd.DataFrame()
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_window)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        q      = "SELECT * FROM gap_curves WHERE snapshot_utc >= ?"
+        params: list = [cutoff]
+        if sport_filter and sport_filter.upper() != "ALL":
+            q += " AND sport = ?"
+            params.append(sport_filter.upper())
+        q += " ORDER BY market_ticker, snapshot_utc"
+        conn = _sqlite3.connect(db_path)
+        df   = pd.read_sql_query(q, conn, params=params)
+        conn.close()
+        if df.empty:
+            return df
+        df["hours_to_game"]    = df["seconds_to_close"]   / 3600
+        df["hours_since_open"] = df["seconds_since_open"] / 3600
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 @st.cache_data(ttl=300)
 def fetch_today_schedule(series_ticker: str = "KXMLBGAME") -> list[dict]:
     """
@@ -390,8 +418,8 @@ for col, label, val, sub in _cards:
 st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab_mlb, tab_wnba, tab_log, tab_perf, tab_sandbox, tab_sys = st.tabs([
-    "⚾ MLB", "🏀 WNBA", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"
+tab_mlb, tab_wnba, tab_curves, tab_log, tab_perf, tab_sandbox, tab_sys = st.tabs([
+    "⚾ MLB", "🏀 WNBA", "📉 Gap Curves", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"
 ])
 
 
@@ -599,6 +627,141 @@ with tab_wnba:
         )
     elif not unsnapped_w:
         st.info("No WNBA games scheduled for today.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB — GAP CURVES
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_curves:
+    gc_ctrl1, gc_ctrl2, _ = st.columns([2, 2, 6])
+    with gc_ctrl1:
+        gc_sport = st.selectbox("Sport", ["All", "MLB", "WNBA"], key="gc_sport")
+    with gc_ctrl2:
+        gc_window_label = st.selectbox("Window", ["Last 24h", "Last 48h", "Last 7 days"], key="gc_window")
+
+    _window_map = {"Last 24h": 24, "Last 48h": 48, "Last 7 days": 168}
+    gc_df = load_gap_curves_db(gc_sport.lower(), _window_map[gc_window_label])
+
+    if gc_df.empty:
+        st.info("No gap curve data yet — the tracker polls every 5 min and writes to data/gap_curves.db. Check back after the next sync.")
+    else:
+        # Drop thinly-sampled markets (< 2 snapshots)
+        _counts = gc_df.groupby("market_ticker")["id"].count()
+        gc_df   = gc_df[gc_df["market_ticker"].isin(_counts[_counts >= 2].index)].copy()
+
+        if gc_df.empty:
+            st.info("Markets found but each has fewer than 2 snapshots — check back after the next poll cycle.")
+        else:
+            chart_col, table_col = st.columns([3, 2])
+
+            with chart_col:
+                st.markdown("**Gap Trajectory** — |Kalshi − Pinnacle| vs hours to game start")
+
+                # One color per event (home + away sides share same color, away = dashed)
+                _events = gc_df["event_ticker"].unique()
+                _palette = [
+                    "#00C896", "#3B82F6", "#F59E0B", "#A78BFA", "#EC4899",
+                    "#10B981", "#60A5FA", "#FBBF24", "#C084FC", "#F472B6",
+                    "#34D399", "#93C5FD", "#FCD34D", "#D8B4FE", "#FB923C",
+                ]
+                _ev_color = {ev: _palette[i % len(_palette)] for i, ev in enumerate(_events)}
+
+                fig_gc = go.Figure()
+                fig_gc.add_hline(
+                    y=5.0, line_dash="dash", line_color="#065F46", line_width=1,
+                    annotation_text="5% threshold",
+                    annotation_font_color="#065F46", annotation_font_size=9,
+                )
+                fig_gc.add_vline(x=0, line_dash="dot", line_color="#7F1D1D", line_width=1)
+
+                _seen_events: set = set()
+                for _, _grp in gc_df.groupby("market_ticker"):
+                    _grp  = _grp.sort_values("snapshot_utc")
+                    _ev   = _grp["event_ticker"].iloc[0]
+                    _col  = _ev_color[_ev]
+                    _team = _grp["team"].iloc[0]
+                    _game = _grp["game"].iloc[0]
+                    _dash = "dash" if _grp["side"].iloc[0] == "AWAY" else "solid"
+                    _show = _ev not in _seen_events
+                    _seen_events.add(_ev)
+
+                    fig_gc.add_trace(go.Scatter(
+                        x=_grp["hours_to_game"],
+                        y=_grp["abs_gap"] * 100,
+                        mode="lines+markers",
+                        line=dict(color=_col, width=2, dash=_dash),
+                        marker=dict(size=4),
+                        name=_game if _show else None,
+                        legendgroup=_ev,
+                        showlegend=_show,
+                        hovertemplate=(
+                            f"<b>{_game}</b><br>"
+                            f"{_team}<br>"
+                            "|Gap|: %{y:.1f}%<br>"
+                            "Hours to game: %{x:.1f}h<extra></extra>"
+                        ),
+                    ))
+
+                fig_gc.update_layout(
+                    xaxis=dict(
+                        title="Hours to Game  (right = game time, 0 = first pitch/tip-off)",
+                        autorange="reversed",
+                        gridcolor="#1F2937",
+                        zerolinecolor="#7F1D1D",
+                    ),
+                    yaxis=dict(
+                        title="|Gap| (%)",
+                        ticksuffix="%",
+                        gridcolor="#1F2937",
+                        zerolinecolor="#1F2937",
+                    ),
+                    legend=dict(
+                        font=dict(size=9, color="#9CA3AF"),
+                        bgcolor="#0D1117",
+                        bordercolor="#1F2937",
+                        title_text="— solid = HOME  · · dashed = AWAY",
+                        title_font=dict(size=8, color="#6B7280"),
+                    ),
+                )
+                st.plotly_chart(dark_plotly(fig_gc, height=360), use_container_width=True)
+
+            with table_col:
+                st.markdown("**Latest Snapshot** — sorted by gap")
+
+                # One row per market_ticker — the most recent reading
+                _latest = (
+                    gc_df.sort_values("snapshot_utc")
+                    .groupby("market_ticker")
+                    .last()
+                    .reset_index()
+                    .sort_values("abs_gap", ascending=False)
+                )
+
+                def _gc_action(g: float) -> str:
+                    return "TRADE ✓" if g >= 0.05 else ("WATCH" if g >= 0.03 else "—")
+
+                _snap_rows = []
+                for _, _r in _latest.iterrows():
+                    _h = _r.get("hours_to_game")
+                    _snap_rows.append({
+                        "Game":   _r["game"],
+                        "Team":   _r["team"],
+                        "Gap":    f"{_r['abs_gap'] * 100:.1f}%",
+                        "Hours":  f"{_h:.1f}h" if pd.notna(_h) else "—",
+                        "Action": _gc_action(_r["abs_gap"]),
+                    })
+                st.dataframe(pd.DataFrame(_snap_rows), use_container_width=True, hide_index=True)
+
+                _n_markets = gc_df["market_ticker"].nunique()
+                _n_games   = gc_df["event_ticker"].nunique()
+                _n_rows    = len(gc_df)
+                st.markdown(
+                    f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
+                    f"{_n_games} games &nbsp;·&nbsp; {_n_markets} market sides &nbsp;·&nbsp; "
+                    f"{_n_rows} snapshots &nbsp;·&nbsp; avg {_n_rows / _n_markets:.1f}/side"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
