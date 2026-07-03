@@ -53,8 +53,18 @@ SPORT_KEYS = {
     "wnba": "basketball_wnba",
 }
 ALL_BOOKS   = ["pinnacle", "draftkings", "fanduel"]
-MIN_GAP     = 0.05   # tier 2 threshold — anything below this isn't a candidate
-TIER1_GAP   = 0.10
+MIN_GAP     = 0.05   # tier A threshold — anything below this isn't a candidate
+TIER_B_GAP  = 0.10
+TIER_C_GAP  = 0.15
+
+
+def _gap_tier(abs_gap: float) -> str:
+    """A = 5-10%, B = 10-15%, C = 15%+."""
+    if abs_gap >= TIER_C_GAP:
+        return "C"
+    if abs_gap >= TIER_B_GAP:
+        return "B"
+    return "A"
 
 LOG_FILE    = os.path.join(BASE, "data", "snapshots", "edge_discovery_log.txt")
 ET          = ZoneInfo("America/New_York")
@@ -292,7 +302,7 @@ def _log_edge_trades(trade_signals: list[dict], skip_signals: list[dict], snap_t
         try:
             from core.notifications import send_imessage
             abs_gap = c.get("best_abs_gap") or abs(c.get("gap") or 0)
-            tier    = 1 if abs_gap >= TIER1_GAP else 2
+            tier    = _gap_tier(abs_gap)
             gap     = c.get("gap") or 0
             verdict = c.get("research", {})
             msg = (
@@ -520,7 +530,7 @@ def compute_gap_matrix(
                 "best_abs_gap":  best_abs_gap,
                 "consensus":     consensus,
                 "books_checked": len(gaps_by_book),
-                "tier":          1 if best_abs_gap >= TIER1_GAP else 2,
+                "tier":          _gap_tier(best_abs_gap),
                 # Flattened fields for research_agent compatibility
                 "date":          start_utc.astimezone(ET).strftime("%b %-d, %Y"),
                 "game_time":     start_utc.astimezone(ET).strftime("%-I:%M %p ET"),
@@ -571,7 +581,7 @@ def print_gap_matrix(candidates: list[dict], sport: str) -> None:
             dk_str  = f"{c['gaps']['draftkings']['book_vf']:.1%}" if "draftkings" in c["gaps"] else "  — "
             fd_str  = f"{c['gaps']['fanduel']['book_vf']:.1%}" if "fanduel" in c["gaps"] else "  — "
             cons    = f"{c['consensus']}/{c['books_checked']}"
-            tier    = f"T{c['tier']}"
+            tier    = f"Tier {c['tier']}"
             print(
                 f"  {c['team']:<24} {c['game']:<38}"
                 f"  {c['k_prob']:.1%}  {pin_str}  {dk_str}  {fd_str}"

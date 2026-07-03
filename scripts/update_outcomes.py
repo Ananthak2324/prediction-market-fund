@@ -38,11 +38,21 @@ from core.utils import ticker_to_utc
 from core.notifications import send_imessage
 
 try:
-    from agent.research_agent import run as _agent_run, TIER1_MIN_GAP
+    from agent.research_agent import run as _agent_run, TIER_B_MIN_GAP, TIER_C_MIN_GAP
     _AGENT_AVAILABLE = True
 except Exception:
     _AGENT_AVAILABLE = False
-    TIER1_MIN_GAP = 0.10
+    TIER_B_MIN_GAP = 0.10
+    TIER_C_MIN_GAP = 0.15
+
+
+def _gap_tier(abs_gap: float) -> str:
+    """A = 5-10%, B = 10-15%, C = 15%+."""
+    if abs_gap >= TIER_C_MIN_GAP:
+        return "C"
+    if abs_gap >= TIER_B_MIN_GAP:
+        return "B"
+    return "A"
 
 KALSHI_BASE    = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 SNAPSHOT_DIR   = "data/snapshots"
@@ -83,7 +93,7 @@ def _build_agent_game_dict(trade: dict) -> dict:
     away  = parts[0].strip() if len(parts) == 2 else ""
     home  = parts[1].strip() if len(parts) == 2 else ""
     abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
-    tier    = 1 if abs_gap >= TIER1_MIN_GAP else 2
+    tier    = _gap_tier(abs_gap)
     start   = trade.get("start_utc", "")
     return {
         "home_team":         home,
@@ -125,7 +135,7 @@ def _agent_fields(verdict: dict) -> dict:
 
 def _format_trade_entry_message(trade: dict) -> str:
     abs_gap = trade.get("abs_gap") or abs(trade.get("gap", 0))
-    tier    = 1 if abs_gap >= TIER1_MIN_GAP else 2
+    tier    = _gap_tier(abs_gap)
     k_prob  = trade.get("k_prob") or 0
     v_prob  = trade.get("v_prob") or 0
     gap     = trade.get("gap") or 0
@@ -750,11 +760,13 @@ def build_summary(trades: list[dict]) -> dict:
         result  = binomtest(len(valid_wins), len(valid), 0.5, alternative="greater")
         p_value = round(result.pvalue, 4)
 
-    # Tier split: gap < 15% = tier 2, gap >= 15% = tier 1 (higher conviction)
-    tier1 = [t for t in resolved if (t.get("abs_gap") or 0) >= 0.15]
-    tier2 = [t for t in resolved if (t.get("abs_gap") or 0) <  0.15]
-    wr_t1 = sum(1 for t in tier1 if t["outcome"] == "WIN") / len(tier1) if tier1 else None
-    wr_t2 = sum(1 for t in tier2 if t["outcome"] == "WIN") / len(tier2) if tier2 else None
+    # Tier split: A = 5-10%, B = 10-15%, C = 15%+ (higher conviction)
+    tier_a = [t for t in resolved if 0.05 <= (t.get("abs_gap") or 0) < 0.10]
+    tier_b = [t for t in resolved if 0.10 <= (t.get("abs_gap") or 0) < 0.15]
+    tier_c = [t for t in resolved if (t.get("abs_gap") or 0) >= 0.15]
+    wr_ta = sum(1 for t in tier_a if t["outcome"] == "WIN") / len(tier_a) if tier_a else None
+    wr_tb = sum(1 for t in tier_b if t["outcome"] == "WIN") / len(tier_b) if tier_b else None
+    wr_tc = sum(1 for t in tier_c if t["outcome"] == "WIN") / len(tier_c) if tier_c else None
 
     # Avg gap — winners vs losers
     avg_gap_w = sum(t.get("abs_gap", 0) for t in resolved if t["outcome"] == "WIN") / len(wins) if wins else None
@@ -824,8 +836,9 @@ def build_summary(trades: list[dict]) -> dict:
 
         # ── breakdown (primary / valid trades only) ───────────────────────
         "win_rate_overall":    round(win_rate, 4) if win_rate is not None else None,
-        "win_rate_tier1":      round(wr_t1, 4) if wr_t1 is not None else None,
-        "win_rate_tier2":      round(wr_t2, 4) if wr_t2 is not None else None,
+        "win_rate_tier_a":     round(wr_ta, 4) if wr_ta is not None else None,
+        "win_rate_tier_b":     round(wr_tb, 4) if wr_tb is not None else None,
+        "win_rate_tier_c":     round(wr_tc, 4) if wr_tc is not None else None,
         "avg_gap_winners":     round(avg_gap_w, 4) if avg_gap_w is not None else None,
         "avg_gap_losers":      round(avg_gap_l, 4) if avg_gap_l is not None else None,
         "p_value":             p_value,
@@ -933,12 +946,15 @@ def print_summary(trades: list[dict], summary: dict) -> None:
         print()
 
     # Tier breakdown
-    t1_wr = summary.get("win_rate_tier1")
-    t2_wr = summary.get("win_rate_tier2")
-    if t1_wr is not None:
-        print(f"  Tier 1 (gap≥15%) : {t1_wr:.1%}")
-    if t2_wr is not None:
-        print(f"  Tier 2 (gap<15%) : {t2_wr:.1%}")
+    ta_wr = summary.get("win_rate_tier_a")
+    tb_wr = summary.get("win_rate_tier_b")
+    tc_wr = summary.get("win_rate_tier_c")
+    if ta_wr is not None:
+        print(f"  Tier A (5–10%)   : {ta_wr:.1%}")
+    if tb_wr is not None:
+        print(f"  Tier B (10–15%)  : {tb_wr:.1%}")
+    if tc_wr is not None:
+        print(f"  Tier C (15%+)    : {tc_wr:.1%}")
     print()
 
     # Gap bucket gradient

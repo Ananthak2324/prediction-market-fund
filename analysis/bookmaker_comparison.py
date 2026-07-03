@@ -319,12 +319,14 @@ def compute_kalshi_gaps(joined: list[dict]) -> dict:
                 "won":        won,
             }
             if book not in by_book:
-                by_book[book] = {"all": [], "tier1": [], "tier2": []}
+                by_book[book] = {"all": [], "tier_a": [], "tier_b": [], "tier_c": []}
             by_book[book]["all"].append(entry)
-            if gd["abs_gap"] >= 0.10:
-                by_book[book]["tier1"].append(entry)
+            if gd["abs_gap"] >= 0.15:
+                by_book[book]["tier_c"].append(entry)
+            elif gd["abs_gap"] >= 0.10:
+                by_book[book]["tier_b"].append(entry)
             elif gd["abs_gap"] >= 0.05:
-                by_book[book]["tier2"].append(entry)
+                by_book[book]["tier_a"].append(entry)
 
     summary = {}
     for book, tiers in by_book.items():
@@ -471,7 +473,7 @@ def print_report(report: dict) -> None:
     else:
         for book in sorted(b):
             print(f"\n  {book.upper()}")
-            for tier in ["tier1", "tier2", "all"]:
+            for tier in ["tier_a", "tier_b", "tier_c", "all"]:
                 s = b[book].get(tier, {})
                 n = s.get("n", 0)
                 if n == 0:

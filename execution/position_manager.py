@@ -65,7 +65,7 @@ def init_db() -> None:
                 away_team        TEXT,
                 kalshi_ticker    TEXT,
                 signal           TEXT,
-                tier             INTEGER,
+                tier             TEXT,
                 gap              REAL,
                 entry_price      REAL,
                 pinnacle_prob    REAL,
@@ -181,7 +181,7 @@ def open_sandbox_position(paper_trade: dict) -> bool:
     away_team = parts[0].strip() if len(parts) == 2 else ""
     home_team = parts[1].strip() if len(parts) == 2 else ""
     abs_gap   = paper_trade.get("abs_gap", 0) or abs(paper_trade.get("gap", 0))
-    tier      = 1 if abs_gap >= 0.10 else 2
+    tier      = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
 
     conn = get_db()
     try:

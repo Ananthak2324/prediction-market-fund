@@ -150,7 +150,7 @@ Return ONLY this JSON object, no markdown fences, no preamble:
   "assessment": "2-4 sentence plain-English verdict on SKIP/TRADE calibration this week",
   "sample_size_note": "one sentence on whether this week's volume is sufficient to act on",
   "proposals": [
-    {{"threshold": "tier1_min_gap", "current_value": 0.10, "proposed_value": 0.08, "rationale": "..."}}
+    {{"threshold": "tier_b_min_gap", "current_value": 0.10, "proposed_value": 0.08, "rationale": "..."}}
   ]
 }}
 """

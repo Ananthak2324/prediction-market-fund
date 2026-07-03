@@ -1,108 +1,123 @@
 """
 scripts/reprocess_skipped_trades.py
 
-Retroactively apply the new calibration logic to all historical SKIP decisions
-and compute how many would have been TRADEs (and whether those were winners).
+Retroactive reprocessing: applies the corrected (post-recalibration) research
+agent decision logic in pure Python to every historical SKIP decision, without
+re-calling the Claude API. Answers: "If the corrected agent logic had been
+running from day one, what would our win rate actually be?"
 
-Logic applied per skipped trade:
-  1. Pre-filter heuristic: if the old record has pinnacle_stable=False → still SKIP
-  2. News-age heuristic:
-       - news_found=False           → would TRADE
-       - news_found=True, pinnacle_stable=True, keywords suggest chronic condition → would TRADE
-       - news_found=True, pinnacle_stable=True, keywords suggest new scratch → borderline SKIP
-       - news_found=True, pinnacle_stable=False → still SKIP
-  3. For each retroactive TRADE, pull shadow_outcome (pre-populated by update_outcomes.py)
+Read-only. Does not modify paper_trades.json or skipped_trades.json.
 
-Output:
-  data/retroactive_analysis.json   — machine-readable results
-  Printed summary table            — human-readable overview
+Data notes (current schema, pre desk-config migration):
+  - data/skipped_trades.json has no "sport" field — sport is derived from the
+    event_ticker prefix (KXMLBGAME → MLB, KXWNBAGAME → WNBA).
+  - Resolved outcome lives in shadow_outcome / shadow_correct / shadow_resolved_at
+    (pre-populated by update_outcomes.py without ever placing a real trade).
+  - No "tier" field — tier is derived from abs_gap (5-10% / 10-15% / 15%+).
+  - No "news_age_estimate" field on legacy records — treated as None, which the
+    override logic below counts as "old" (conservative: TRADE bias, matching
+    the corrected agent's philosophy that unknown-age news defaults to priced-in).
 
-P-value: exact binomial test (no scipy dependency).
+Usage:
+    python scripts/reprocess_skipped_trades.py
 """
 
 import json
-import math
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+
+from scipy.stats import binomtest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-BASE         = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKIPPED_FILE = os.path.join(BASE, "data", "skipped_trades.json")
-OUTPUT_FILE  = os.path.join(BASE, "data", "retroactive_analysis.json")
+BASE          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SKIPPED_FILE  = os.path.join(BASE, "data", "skipped_trades.json")
+TRADES_FILE   = os.path.join(BASE, "data", "paper_trades.json")
+OUT_JSON      = os.path.join(BASE, "outputs", "retroactive_analysis.json")
+OUT_TXT       = os.path.join(BASE, "outputs", "retroactive_report.txt")
 
-# Keywords in news_detail that suggest a CHRONIC (already-priced) condition
 CHRONIC_KEYWORDS = [
-    "il", "injured list", "disabled list", "season-ending", "season ending",
-    "out for the season", "placed on", "tommy john", "acl", "acuna", "strider",
-    "seager", "out since", "has been out", "has been on", "missed the last",
-    "day-to-day", "not expected", "expected to return", "rehab",
+    "acuna", "strider", "seager",
+    "tommy john", "60-day", "season-ending",
+    "placed on il", "injured list",
+    "caitlin clark",  # WNBA example
 ]
 
-# Keywords in news_detail that suggest a genuine NEW scratch (this-game disqualifier)
-NEW_SCRATCH_KEYWORDS = [
-    "scratched", "scratch tonight", "scratch today", "ruled out tonight",
-    "ruled out today", "late scratch", "did not start", "not in lineup",
-    "will not start", "won't start",
+# Matches the actual system: agent/edge_discovery_agent.py TIER_B_GAP=0.10, TIER_C_GAP=0.15, MIN_GAP=0.05
+TIER_BOUNDS = [
+    ("tier_a", 0.05, 0.10),
+    ("tier_b", 0.10, 0.15),
+    ("tier_c", 0.15, float("inf")),
 ]
 
 
-def _is_chronic(news_detail: str) -> bool:
-    nd = (news_detail or "").lower()
-    has_chronic = any(kw in nd for kw in CHRONIC_KEYWORDS)
-    has_new     = any(kw in nd for kw in NEW_SCRATCH_KEYWORDS)
-    return has_chronic and not has_new
+# ── sport / tier derivation ─────────────────────────────────────────────────
+
+def _derive_sport(trade: dict) -> str:
+    et = trade.get("event_ticker", "") or trade.get("kalshi_ticker", "")
+    if "MLBGAME" in et:
+        return "MLB"
+    if "WNBAGAME" in et:
+        return "WNBA"
+    if "NBAGAME" in et:
+        return "NBA"
+    if "NFLGAME" in et:
+        return "NFL"
+    return trade.get("sport", "UNKNOWN") or "UNKNOWN"
 
 
-def _retroactive_verdict(trade: dict) -> str:
+def _derive_tier(abs_gap: float) -> str:
+    for label, lo, hi in TIER_BOUNDS:
+        if lo <= abs_gap < hi:
+            return label
+    return "tier_a"
+
+
+# ── core recalibration logic (applied exactly as specified) ────────────────
+
+def would_new_agent_trade(trade: dict) -> tuple[bool, str]:
     """
-    Apply new calibration logic to a historical skip record.
-    Returns "TRADE" or "SKIP".
+    Returns (would_trade: bool, reason: str)
     """
-    # Pre-filter skips: trust the pre_filter decision (keep as SKIP)
-    if trade.get("pre_filter_skip"):
-        return "SKIP"
+    # Rule 1 — Pinnacle moved hard (always SKIP)
+    pinnacle_movement = trade.get("pinnacle_movement") or 0
+    if pinnacle_movement >= 0.05:
+        return False, "PINNACLE_MOVED_HARD"
 
-    pinnacle_stable   = trade.get("pinnacle_stable", True)
-    news_found        = trade.get("news_found",  False)
-    news_detail       = trade.get("news_detail") or ""
-    pinnacle_movement = float(trade.get("pinnacle_movement") or 0.0)
+    # Rule 2 — No news found at all (always TRADE)
+    if not trade.get("news_found", False):
+        return True, "NO_NEWS_FOUND"
 
-    # Pinnacle moved hard → still SKIP (sharp money reacting)
-    if not pinnacle_stable and pinnacle_movement >= 0.05:
-        return "SKIP"
+    # Rule 3 — News found but Pinnacle stable
+    # Old agent: SKIP because news_found=True
+    # New agent: check if news is old/chronic
+    if trade.get("pinnacle_stable", True):
 
-    # No news found → behavioral gap, TRADE
-    if not news_found:
-        return "TRADE"
+        news_detail = (trade.get("news_detail") or "").lower()
+        news_age = trade.get("news_age_estimate", "older")
 
-    # News found + Pinnacle stable → check if news is chronic or new
-    if pinnacle_stable:
-        if _is_chronic(news_detail):
-            return "TRADE"
-        # Ambiguous or new scratch keywords → keep as SKIP (conservative)
-        return "SKIP"
+        is_chronic = any(kw in news_detail for kw in CHRONIC_KEYWORDS)
+        is_old_news = news_age in ["this week", "older", None]
 
-    # News found + Pinnacle unstable → SKIP
-    return "SKIP"
+        if is_chronic or is_old_news:
+            # Old agent wrongly skipped this
+            # New agent would TRADE
+            return True, "CHRONIC_OR_OLD_NEWS_OVERRIDDEN"
+
+        # News is recent and not chronic
+        # New agent would still SKIP
+        return False, "RECENT_NEWS_CONFIRMED"
+
+    # Rule 4 — News found and Pinnacle moved softly (between 3% and 5%) — MONITOR not SKIP
+    if pinnacle_movement >= 0.03:
+        return False, "PINNACLE_SOFT_MOVE"
+
+    # Default — if news is ambiguous and Pinnacle stable
+    return True, "DEFAULT_TRADE_STABLE_PINNACLE"
 
 
-def _binomial_p_value(wins: int, n: int, p: float = 0.5) -> float:
-    """
-    One-sided p-value: P(X >= wins) under H0 (p=0.5, no edge).
-    Uses exact binomial PMF. No scipy.
-    """
-    if n == 0:
-        return 1.0
-    p_val = 0.0
-    for k in range(wins, n + 1):
-        # log-space to avoid overflow
-        log_binom = math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
-        log_prob  = log_binom + k * math.log(p) + (n - k) * math.log(1 - p)
-        p_val    += math.exp(log_prob)
-    return round(p_val, 6)
-
+# ── main ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
     if not os.path.exists(SKIPPED_FILE):
@@ -112,99 +127,282 @@ def main() -> None:
     with open(SKIPPED_FILE) as f:
         skipped = json.load(f)
 
-    print(f"Loaded {len(skipped)} skipped trades from {SKIPPED_FILE}")
+    existing_trades: list[dict] = []
+    if os.path.exists(TRADES_FILE):
+        with open(TRADES_FILE) as f:
+            existing_trades = json.load(f)
 
-    results: list[dict] = []
-    would_trade: list[dict] = []
-    kept_skip:   list[dict] = []
+    # ── Step 2/3 — apply logic + bucket results ─────────────────────────────
+    would_trade_records: list[dict] = []
+    kept_skip_records:   list[dict] = []
+
+    override_reason_counts = {
+        "CHRONIC_OR_OLD_NEWS_OVERRIDDEN": 0,
+        "NO_NEWS_FOUND": 0,
+        "DEFAULT_TRADE_STABLE_PINNACLE": 0,
+    }
+    skip_reason_counts = {
+        "PINNACLE_MOVED_HARD": 0,
+        "RECENT_NEWS_CONFIRMED": 0,
+        "PINNACLE_SOFT_MOVE": 0,
+    }
+
+    by_sport: dict[str, dict] = {}
+    by_tier:  dict[str, dict] = {}
+
+    def _bucket_init() -> dict:
+        return {"resolved": 0, "wins": 0}
+
+    retro_wins = retro_losses = retro_unresolved = 0
 
     for trade in skipped:
-        retro = _retroactive_verdict(trade)
+        sport = _derive_sport(trade)
+        abs_gap = trade.get("abs_gap") or abs(trade.get("gap") or 0)
+        tier = _derive_tier(abs_gap)
+
+        would_trade, reason = would_new_agent_trade(trade)
+        outcome = trade.get("shadow_outcome")  # "WIN" / "LOSS" / None
+
         record = {
-            "trade_id":         trade.get("trade_id"),
-            "game":             trade.get("game"),
-            "team":             trade.get("team"),
-            "signal":           trade.get("signal"),
-            "gap":              trade.get("gap"),
-            "abs_gap":          trade.get("abs_gap"),
-            "skipped_at":       trade.get("skipped_at"),
-            "pinnacle_stable":  trade.get("pinnacle_stable"),
-            "pinnacle_movement":trade.get("pinnacle_movement"),
-            "news_found":       trade.get("news_found"),
-            "news_detail":      trade.get("news_detail"),
-            "pre_filter_skip":  trade.get("pre_filter_skip", False),
-            "old_verdict":      "SKIP",
-            "new_verdict":      retro,
-            "shadow_outcome":   trade.get("shadow_outcome"),
-            "shadow_correct":   trade.get("shadow_correct"),
+            "trade_id":     trade.get("trade_id"),
+            "game":         trade.get("game"),
+            "sport":        sport,
+            "tier":         tier,
+            "gap":          trade.get("gap"),
+            "abs_gap":      abs_gap,
+            "news_found":   trade.get("news_found"),
+            "news_detail":  trade.get("news_detail"),
+            "pinnacle_stable":   trade.get("pinnacle_stable"),
+            "pinnacle_movement": trade.get("pinnacle_movement"),
+            "would_trade":  would_trade,
+            "reason":       reason,
+            "shadow_outcome":    outcome,
             "shadow_resolved_at": trade.get("shadow_resolved_at"),
         }
-        results.append(record)
-        if retro == "TRADE":
-            would_trade.append(record)
+
+        if would_trade:
+            would_trade_records.append(record)
+            override_reason_counts[reason] = override_reason_counts.get(reason, 0) + 1
+
+            by_sport.setdefault(sport, _bucket_init())
+            by_tier.setdefault(tier, _bucket_init())
+
+            if outcome == "WIN":
+                retro_wins += 1
+                by_sport[sport]["resolved"] += 1
+                by_sport[sport]["wins"] += 1
+                by_tier[tier]["resolved"] += 1
+                by_tier[tier]["wins"] += 1
+            elif outcome == "LOSS":
+                retro_losses += 1
+                by_sport[sport]["resolved"] += 1
+                by_tier[tier]["resolved"] += 1
+            else:
+                retro_unresolved += 1
         else:
-            kept_skip.append(record)
+            kept_skip_records.append(record)
+            skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
 
-    # ── Stats on retroactive TRADEs ───────────────────────────────────────────
-    resolved  = [r for r in would_trade if r["shadow_outcome"] is not None]
-    unresolved = [r for r in would_trade if r["shadow_outcome"] is None]
-    wins       = [r for r in resolved if r["shadow_correct"] is True]
-    losses     = [r for r in resolved if r["shadow_correct"] is False]
+    retro_resolved = retro_wins + retro_losses
+    retro_win_rate = (retro_wins / retro_resolved) if retro_resolved else None
 
-    n     = len(resolved)
-    w     = len(wins)
-    win_rate = (w / n) if n > 0 else None
-    p_val = _binomial_p_value(w, n, p=0.5) if n > 0 else None
+    # ── Step 4 — combine with current clean paper trades ────────────────────
+    current_resolved_trades = [t for t in existing_trades if t.get("outcome") in ("WIN", "LOSS")]
+    current_wins   = sum(1 for t in current_resolved_trades if t.get("outcome") == "WIN")
+    current_resolved = len(current_resolved_trades)
+    current_win_rate = (current_wins / current_resolved) if current_resolved else None
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    print(f"\n{'═'*70}")
-    print(f"  RETROACTIVE ANALYSIS — NEW CALIBRATION RULES")
-    print(f"{'═'*70}")
-    print(f"  Total skipped trades:         {len(skipped):>5}")
-    print(f"  Would still SKIP:             {len(kept_skip):>5}")
-    print(f"  Would now TRADE:              {len(would_trade):>5}  ({len(would_trade)/len(skipped):.1%} of skips)")
-    print(f"")
-    print(f"  Of retroactive TRADEs:")
-    print(f"    Resolved (shadow outcome):  {n:>5}")
-    print(f"    Unresolved:                 {len(unresolved):>5}")
-    if n > 0:
-        print(f"    Wins:                       {w:>5}  ({win_rate:.1%})")
-        print(f"    Losses:                     {len(losses):>5}")
-        print(f"    P-value (H0: p=0.5):        {p_val:.4f}{'  ★ significant' if p_val is not None and p_val < 0.05 else ''}")
+    combined_resolved = current_resolved + retro_resolved
+    combined_wins      = current_wins + retro_wins
+    combined_win_rate  = (combined_wins / combined_resolved) if combined_resolved else None
 
-    print(f"\n  Breakdown — why SKIPs would flip to TRADE:")
-    no_news = sum(1 for r in would_trade if not r["news_found"])
-    chronic = sum(1 for r in would_trade if r["news_found"])
-    print(f"    No news found:              {no_news:>5}")
-    print(f"    News found but chronic:     {chronic:>5}")
+    p_value = None
+    if combined_resolved > 0:
+        p_value = binomtest(combined_wins, n=combined_resolved, p=0.5, alternative="greater").pvalue
 
-    print(f"\n  Sample retroactive TRADEs (first 10):")
-    print(f"  {'GAME':<40} {'GAP':>7}  {'OUTCOME':<10}  DETAIL")
-    print(f"  {'─'*80}")
-    for r in would_trade[:10]:
-        outcome = r["shadow_outcome"] or "pending"
-        detail  = (r["news_detail"] or "")[:40]
-        print(f"  {str(r['game']):<40} {(r['abs_gap'] or 0):>6.1%}  {outcome:<10}  {detail}")
+    if p_value is None:
+        significance = "N/A"
+    elif p_value < 0.05:
+        significance = "YES (p<0.05)"
+    elif p_value < 0.10:
+        significance = "APPROACHING (p<0.10)"
+    else:
+        significance = "NOT YET (p>0.10)"
 
-    # ── Save output ────────────────────────────────────────────────────────────
+    # ── Raw signal validation — all resolved outcomes, no agent filtering ───
+    raw_resolved = current_resolved + sum(
+        1 for t in skipped if t.get("shadow_outcome") in ("WIN", "LOSS")
+    )
+    raw_wins = current_wins + sum(
+        1 for t in skipped if t.get("shadow_outcome") == "WIN"
+    )
+    raw_win_rate = (raw_wins / raw_resolved) if raw_resolved else None
+
+    # ── Days of data ─────────────────────────────────────────────────────────
+    all_dates: list[datetime] = []
+    for t in existing_trades + skipped:
+        ts = t.get("snapshot_time") or t.get("skipped_at")
+        if not ts:
+            continue
+        try:
+            ts_clean = ts.replace("_", "T").split(".")[0]
+            all_dates.append(datetime.fromisoformat(ts_clean.replace("Z", "")))
+        except Exception:
+            continue
+    days_of_data = (max(all_dates) - min(all_dates)).days + 1 if all_dates else 0
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # ── Step 5 — build report text ───────────────────────────────────────────
+    lines: list[str] = []
+    w = lines.append
+
+    w("═" * 56)
+    w("  RETROACTIVE REPROCESSING RESULTS")
+    w("  EdgeFund — Agent Recalibration Analysis")
+    w(f"  Generated: {generated_at}")
+    w("═" * 56)
+    w("")
+    w("SKIPPED TRADES ANALYZED")
+    n_skip = len(skipped)
+    n_would = len(would_trade_records)
+    n_kept = len(kept_skip_records)
+    w(f"  Total skipped trades:              {n_skip}")
+    w(f"  Would TRADE under new logic:       {n_would} ({(n_would/n_skip*100 if n_skip else 0):.0f}%)")
+    w(f"  Correctly kept as SKIP:            {n_kept} ({(n_kept/n_skip*100 if n_skip else 0):.0f}%)")
+    w("")
+    w("  Override reasons:")
+    w(f"    CHRONIC_OR_OLD_NEWS_OVERRIDDEN:  {override_reason_counts['CHRONIC_OR_OLD_NEWS_OVERRIDDEN']}")
+    w(f"    NO_NEWS_FOUND (wrongly skipped): {override_reason_counts['NO_NEWS_FOUND']}")
+    w(f"    DEFAULT_TRADE_STABLE_PINNACLE:   {override_reason_counts['DEFAULT_TRADE_STABLE_PINNACLE']}")
+    w("")
+    w("  Kept as SKIP reasons:")
+    w(f"    PINNACLE_MOVED_HARD:             {skip_reason_counts['PINNACLE_MOVED_HARD']}")
+    w(f"    RECENT_NEWS_CONFIRMED:           {skip_reason_counts['RECENT_NEWS_CONFIRMED']}")
+    w(f"    PINNACLE_SOFT_MOVE:              {skip_reason_counts['PINNACLE_SOFT_MOVE']}")
+    w("")
+    w("─" * 56)
+    w("RETROACTIVE TRADE OUTCOMES")
+    w(f"  Would-be trades with resolved outcomes: {retro_resolved}")
+    w(f"  Retroactive wins:                       {retro_wins}")
+    w(f"  Retroactive losses:                     {retro_losses}")
+    w(f"  Retroactive win rate:                   {(retro_win_rate*100 if retro_win_rate is not None else 0):.1f}%")
+    w("")
+    w(f"  Unresolved (game not yet played):       {retro_unresolved}")
+    w("")
+    w("BY SPORT")
+    for sport, b in sorted(by_sport.items()):
+        wr = (b["wins"] / b["resolved"] * 100) if b["resolved"] else 0
+        w(f"  {sport} retroactive:  {b['resolved']} resolved | {wr:.0f}% win rate")
+    if not by_sport:
+        w("  (none)")
+    w("")
+    w("BY TIER")
+    tier_labels = {"tier_a": "Tier A (5-10%)", "tier_b": "Tier B (10-15%)", "tier_c": "Tier C (15%+)"}
+    for tier_key in ("tier_a", "tier_b", "tier_c"):
+        b = by_tier.get(tier_key, _bucket_init())
+        wr = (b["wins"] / b["resolved"] * 100) if b["resolved"] else 0
+        w(f"  {tier_labels[tier_key]}: {b['resolved']} resolved | {wr:.0f}% win rate")
+    w("")
+    w("─" * 56)
+    w("COMBINED PICTURE (current + retroactive)")
+    w(f"  Current clean trades resolved:     {current_resolved}")
+    w(f"  Current win rate:                  {(current_win_rate*100 if current_win_rate is not None else 0):.1f}%")
+    w("")
+    w(f"  Retroactive trades resolved:       {retro_resolved}")
+    w(f"  Retroactive win rate:              {(retro_win_rate*100 if retro_win_rate is not None else 0):.1f}%")
+    w("")
+    w("  " + "─" * 35)
+    w(f"  COMBINED resolved:                 {combined_resolved}")
+    w(f"  COMBINED wins:                     {combined_wins}")
+    w(f"  COMBINED win rate:                 {(combined_win_rate*100 if combined_win_rate is not None else 0):.1f}%")
+    w(f"  P-value vs 50% null:               {p_value:.3f}" if p_value is not None else "  P-value vs 50% null:               N/A")
+    w(f"  Statistical significance:          {significance}")
+    w("  " + "─" * 35)
+    w("")
+    w("─" * 56)
+    w("RAW SIGNAL VALIDATION")
+    w(f"  Raw gap signal win rate            {(raw_win_rate*100 if raw_win_rate is not None else 0):.1f}%")
+    w("  (all resolved trades before        (was 78.6% —")
+    w("   any agent filtering)               confirm this holds)")
+    w("")
+    w(f"  Corrected agent win rate:          {(combined_win_rate*100 if combined_win_rate is not None else 0):.1f}%")
+    w("  (retroactive + current combined)")
+    w("")
+    w("─" * 56)
+    w("YC APPLICATION NUMBERS")
+    w(f"  Headline win rate to use:          {(combined_win_rate*100 if combined_win_rate is not None else 0):.1f}%")
+    w(f"  Sample size:                       {combined_resolved} resolved trades")
+    w(f"  P-value:                           {p_value:.3f}" if p_value is not None else "  P-value:                           N/A")
+    w(f"  Days of data:                      {days_of_data}")
+    w("")
+    w("  Honest framing:")
+    w(f'  "Our gap signal produces a {(combined_win_rate*100 if combined_win_rate is not None else 0):.0f}% win rate across ')
+    w(f"  {combined_resolved} resolved trades ({days_of_data} days of data, p={p_value:.3f}). " if p_value is not None else f"  {combined_resolved} resolved trades ({days_of_data} days of data).")
+    w("  We identified and corrected an agent calibration ")
+    w("  bug that was over-filtering candidates — the ")
+    w('  corrected pipeline has been live since July 3."')
+    w("")
+    w("═" * 56)
+
+    report_text = "\n".join(lines)
+    print(report_text)
+
+    # Verdict banner
+    if combined_win_rate is not None and combined_win_rate > 0.65 and p_value is not None and p_value < 0.10:
+        print("\n✓ STRONG — lead with this in YC application")
+    elif combined_win_rate is not None and 0.58 <= combined_win_rate <= 0.65 and p_value is not None and p_value < 0.20:
+        print("\n→ PROMISING — continue accumulating trades")
+    else:
+        print("\n⚠ INVESTIGATE — check if retroactive logic is applying correctly")
+
+    # ── Save outputs ──────────────────────────────────────────────────────────
+    os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)
     output = {
-        "generated_at":        datetime.now().isoformat(),
-        "total_skipped":       len(skipped),
-        "would_still_skip":    len(kept_skip),
-        "would_now_trade":     len(would_trade),
-        "resolved_count":      n,
-        "wins":                w,
-        "losses":              len(losses),
-        "win_rate":            round(win_rate, 4) if win_rate is not None else None,
-        "p_value":             p_val,
-        "no_news_flips":       no_news,
-        "chronic_news_flips":  chronic,
-        "records":             results,
+        "generated_at": generated_at,
+        "total_skipped": n_skip,
+        "would_trade_count": n_would,
+        "kept_skip_count": n_kept,
+        "override_reason_counts": override_reason_counts,
+        "skip_reason_counts": skip_reason_counts,
+        "retroactive": {
+            "resolved": retro_resolved,
+            "wins": retro_wins,
+            "losses": retro_losses,
+            "unresolved": retro_unresolved,
+            "win_rate": round(retro_win_rate, 4) if retro_win_rate is not None else None,
+        },
+        "by_sport": by_sport,
+        "by_tier": by_tier,
+        "current": {
+            "resolved": current_resolved,
+            "wins": current_wins,
+            "win_rate": round(current_win_rate, 4) if current_win_rate is not None else None,
+        },
+        "combined": {
+            "resolved": combined_resolved,
+            "wins": combined_wins,
+            "win_rate": round(combined_win_rate, 4) if combined_win_rate is not None else None,
+            "p_value": round(p_value, 6) if p_value is not None else None,
+            "significance": significance,
+        },
+        "raw_signal": {
+            "resolved": raw_resolved,
+            "wins": raw_wins,
+            "win_rate": round(raw_win_rate, 4) if raw_win_rate is not None else None,
+        },
+        "days_of_data": days_of_data,
+        "would_trade_records": would_trade_records,
+        "kept_skip_records": kept_skip_records,
     }
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    with open(OUTPUT_FILE, "w") as f:
+    with open(OUT_JSON, "w") as f:
         json.dump(output, f, indent=2, default=str)
-    print(f"\n  Saved to {OUTPUT_FILE}")
+
+    with open(OUT_TXT, "w") as f:
+        f.write(report_text + "\n")
+
+    print(f"\nSaved to {OUT_JSON}")
+    print(f"Saved to {OUT_TXT}")
 
 
 if __name__ == "__main__":

@@ -46,8 +46,9 @@ THRESHOLDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thre
 _DEFAULT_THRESHOLDS = {
     "pinnacle_movement_threshold": 0.03,
     "large_gap_warn":              0.20,
-    "tier1_min_gap":               0.10,
-    "tier2_min_gap":               0.05,
+    "tier_a_min_gap":              0.05,
+    "tier_b_min_gap":              0.10,
+    "tier_c_min_gap":              0.15,
 }
 
 
@@ -63,8 +64,18 @@ THRESHOLDS = _load_thresholds()
 
 PINNACLE_MOVEMENT_THRESHOLD = THRESHOLDS["pinnacle_movement_threshold"]
 LARGE_GAP_WARN              = THRESHOLDS["large_gap_warn"]
-TIER1_MIN_GAP               = THRESHOLDS["tier1_min_gap"]
-TIER2_MIN_GAP               = THRESHOLDS["tier2_min_gap"]
+TIER_A_MIN_GAP              = THRESHOLDS["tier_a_min_gap"]
+TIER_B_MIN_GAP              = THRESHOLDS["tier_b_min_gap"]
+TIER_C_MIN_GAP              = THRESHOLDS["tier_c_min_gap"]
+
+
+def _gap_tier(abs_gap: float) -> str:
+    """A = 5-10%, B = 10-15%, C = 15%+."""
+    if abs_gap >= TIER_C_MIN_GAP:
+        return "C"
+    if abs_gap >= TIER_B_MIN_GAP:
+        return "B"
+    return "A"
 
 COST_LOG = "data/agent_cost_log.csv"
 
@@ -167,11 +178,11 @@ def _build_verdict_prompt(edge_context: dict) -> str:
     rules = {
         "MARKET_ANOMALY":       "SKIP only if you found fresh news (<48h) with a genuine status change today. TRADE if gap is behavioral and Pinnacle is stable.",
         "SHARP_SIGNAL":         "SKIP if Pinnacle moved >3pp AND you found confirming news. MONITOR if zero news found. TRADE is appropriate if Pinnacle has since stabilised.",
-        "MULTI_BOOK_CONSENSUS": f"TRADE if no fresh status-change news found. SKIP only for confirmed new scratches or ruled-out players today. Gap ≥ {TIER2_MIN_GAP:.0%} required.",
+        "MULTI_BOOK_CONSENSUS": f"TRADE if no fresh status-change news found. SKIP only for confirmed new scratches or ruled-out players today. Gap ≥ {TIER_A_MIN_GAP:.0%} required.",
         "RETAIL_BOOK_SOFT":     "TRADE if no news found and Pinnacle is stable. MONITOR only if evidence is genuinely ambiguous.",
-        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and no fresh status-change news. SKIP only for breaking news TODAY — not chronic conditions.",
+        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER_A_MIN_GAP:.0%} and no fresh status-change news. SKIP only for breaking news TODAY — not chronic conditions.",
     }
-    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} with no fresh status-change news.")
+    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER_A_MIN_GAP:.0%} with no fresh status-change news.")
 
     return (
         "Based on your research above, return ONLY this exact JSON object "
@@ -207,8 +218,8 @@ def _build_verdict_prompt(edge_context: dict) -> str:
         "- Only SKIP for genuine status changes announced TODAY\n"
         "- A stable Pinnacle line confirms all known information is already priced in\n"
         "- Fill out behavioral_analysis even when issuing SKIP\n"
-        f"- HIGH confidence TRADE: no news, Pinnacle stable, abs_gap ≥ {TIER1_MIN_GAP:.0%}\n"
-        f"- MEDIUM confidence TRADE: no disqualifying news, Pinnacle stable, abs_gap ≥ {TIER2_MIN_GAP:.0%}\n"
+        f"- HIGH confidence TRADE: no news, Pinnacle stable, abs_gap ≥ {TIER_B_MIN_GAP:.0%}\n"
+        f"- MEDIUM confidence TRADE: no disqualifying news, Pinnacle stable, abs_gap ≥ {TIER_A_MIN_GAP:.0%}\n"
     )
 
 
@@ -342,7 +353,7 @@ def _build_user_message(
     v_prob       = game_dict.get("pinnacle_prob") or game_dict.get("v_prob", 0)
     gap          = game_dict.get("gap", 0)
     abs_gap      = abs(gap)
-    tier         = game_dict.get("tier", 2)
+    tier         = game_dict.get("tier") or _gap_tier(abs_gap)
     signal       = game_dict.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")
     hours_before = game_dict.get("hours_before_game")
 

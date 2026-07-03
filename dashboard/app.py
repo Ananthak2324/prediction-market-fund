@@ -380,7 +380,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─── METRIC CARDS ─────────────────────────────────────────────────────────────
-wr1     = summary.get("win_rate_tier1")
+wr1     = summary.get("win_rate_tier_c")
 total   = summary.get("total_logged", 0)
 res_ct  = summary.get("total_resolved", 0)
 pval    = summary.get("p_value")
@@ -399,7 +399,7 @@ pv_sub = ("Significant ✓"        if pval and pval < 0.05 else
 
 mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
 _cards = [
-    (mc1, "Win Rate (T1)",  f"<span class='{wr_cls}'>{fmt_pct(wr1)}</span>",           "tier 1 only"),
+    (mc1, "Win Rate (Tier C)",  f"<span class='{wr_cls}'>{fmt_pct(wr1)}</span>",           "gap ≥15% only"),
     (mc2, "Trades Logged",  f"<span class='teal'>{total}</span>",                      "&nbsp;"),
     (mc3, "Resolved",       f"<span class='teal'>{res_ct}</span>",                     f"of {total} total"),
     (mc4, "Avg Gap",        f"<span class='teal'>{fmt_pct(avg_gap)}</span>",           "all trades"),
@@ -446,7 +446,7 @@ with tab_mlb:
         gap     = row.get("gap", 0) or 0
         abs_gap = row.get("abs_gap", abs(gap))
         signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
-        tier    = 1 if abs_gap >= 0.10 else 2
+        tier    = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
 
         try:
             game_dt = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
@@ -462,7 +462,7 @@ with tab_mlb:
         if game_dt.astimezone(ET).date() == today_et_date:
             snapped_tickers.add(row.get("event_ticker", ""))
 
-        if abs_gap >= 0.05 and tier == 1:
+        if abs_gap >= 0.05 and tier in ("B", "C"):
             action = "TRADE ✓"
         elif abs_gap >= 0.03:
             action = "WATCH"
@@ -519,11 +519,11 @@ with tab_mlb:
         st.dataframe(df_snap, use_container_width=True, hide_index=True)
 
         n_games  = len(records)
-        t1_ct    = sum(1 for r in records if r["Tier"] == 1)
+        bc_ct    = sum(1 for r in records if r["Tier"] in ("B", "C"))
         gap3_ct  = sum(1 for r in records if r["Action"] in ("TRADE ✓", "WATCH"))
         st.markdown(
             f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
-            f"{n_games} sides tracked &nbsp;·&nbsp; {t1_ct} Tier 1 signals &nbsp;·&nbsp; "
+            f"{n_games} sides tracked &nbsp;·&nbsp; {bc_ct} Tier B/C signals &nbsp;·&nbsp; "
             f"{gap3_ct} show |gap| ≥ 3% &nbsp;·&nbsp; "
             f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
             f"</div>",
@@ -548,7 +548,7 @@ with tab_wnba:
         gap     = row.get("gap", 0) or 0
         abs_gap = row.get("abs_gap", abs(gap))
         signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
-        tier    = 1 if abs_gap >= 0.10 else 2
+        tier    = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
 
         try:
             game_dt_w = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
@@ -563,7 +563,7 @@ with tab_wnba:
         if game_dt_w is not None and game_dt_w.astimezone(ET).date() == today_et_date_w:
             snapped_tickers_w.add(row.get("event_ticker", ""))
 
-        if abs_gap >= 0.05 and tier == 1:
+        if abs_gap >= 0.05 and tier in ("B", "C"):
             action = "TRADE ✓"
         elif abs_gap >= 0.03:
             action = "WATCH"
@@ -618,11 +618,11 @@ with tab_wnba:
         st.dataframe(df_snap_w, use_container_width=True, hide_index=True)
 
         n_games_w = len(records_w)
-        t1_ct_w   = sum(1 for r in records_w if r["Tier"] == 1)
+        bc_ct_w   = sum(1 for r in records_w if r["Tier"] in ("B", "C"))
         gap3_ct_w = sum(1 for r in records_w if r["Action"] in ("TRADE ✓", "WATCH"))
         st.markdown(
             f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
-            f"{n_games_w} sides tracked &nbsp;·&nbsp; {t1_ct_w} Tier 1 signals &nbsp;·&nbsp; "
+            f"{n_games_w} sides tracked &nbsp;·&nbsp; {bc_ct_w} Tier B/C signals &nbsp;·&nbsp; "
             f"{gap3_ct_w} show |gap| ≥ 3% &nbsp;·&nbsp; "
             f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
             f"</div>",
@@ -800,7 +800,7 @@ with tab_log:
         with fc2:
             sel_outcome = st.selectbox("Outcome", ["All", "WIN", "LOSS", "OPEN", "SKIPPED"], key="t2_outcome")
         with fc3:
-            sel_tier = st.selectbox("Tier", ["All", "Tier 1", "Tier 2"], key="t2_tier")
+            sel_tier = st.selectbox("Tier", ["All", "Tier A", "Tier B", "Tier C"], key="t2_tier")
         with fc4:
             date_options = ["All"] + [date_labels[d] for d in raw_dates]
             sel_date_label = st.selectbox("Game Date", date_options, key="t2_game_date")
@@ -812,10 +812,12 @@ with tab_log:
         elif sel_outcome in ("WIN", "LOSS", "SKIPPED"):
             df = df[df["outcome"] == sel_outcome]
         if "abs_gap" in df.columns:
-            if sel_tier == "Tier 1":
-                df = df[df["abs_gap"] >= 0.10]
-            elif sel_tier == "Tier 2":
-                df = df[df["abs_gap"] < 0.10]
+            if sel_tier == "Tier A":
+                df = df[(df["abs_gap"] >= 0.05) & (df["abs_gap"] < 0.10)]
+            elif sel_tier == "Tier B":
+                df = df[(df["abs_gap"] >= 0.10) & (df["abs_gap"] < 0.15)]
+            elif sel_tier == "Tier C":
+                df = df[df["abs_gap"] >= 0.15]
         if sel_date_label != "All":
             # Map label back to raw date
             sel_raw_date = next((d for d, lbl in date_labels.items() if lbl == sel_date_label), None)
@@ -849,7 +851,9 @@ with tab_log:
                               axis=1,
                           ),
             "Gap":        df["abs_gap"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),
-            "Tier":       df["abs_gap"].apply(lambda v: 1 if pd.notna(v) and v >= 0.10 else 2) if "abs_gap" in df.columns else "—",
+            "Tier":       df["abs_gap"].apply(
+                              lambda v: ("C" if v >= 0.15 else ("B" if v >= 0.10 else "A")) if pd.notna(v) else "—"
+                          ) if "abs_gap" in df.columns else "—",
             "Kalshi":     df["k_prob"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),
             "Pinnacle":   df["v_prob"].apply(lambda v: fmt_pct(v) if pd.notna(v) else "—"),
             "Agent":      agent_col.fillna("—"),
@@ -1566,7 +1570,7 @@ with tab_sys:
     st.markdown("**LIVE CONDITIONS GATE**")
 
     clean_res = summary.get("clean_trades", {}).get("resolved", 0)
-    wr_t1_val = summary.get("win_rate_tier1") or 0
+    wr_t1_val = summary.get("win_rate_tier_c") or 0
 
     agent_all_covered = (
         not trades_df.empty
@@ -1576,8 +1580,8 @@ with tab_sys:
 
     conditions = [
         ("14+ days of clean snapshot data",        n_snap_days >= 14),
-        ("30+ resolved Tier 1 trades",             clean_res >= 30),
-        ("Win rate ≥ 58% on Tier 1",               wr_t1_val >= 0.58),
+        ("30+ resolved clean trades",              clean_res >= 30),
+        ("Win rate ≥ 58% on Tier C",                wr_t1_val >= 0.58),
         ("P-value < 0.10",                         pval is not None and pval < 0.10),
         ("Agent attached to all trades",           agent_all_covered),
         ("Position manager tested (5+ cycles)",    False),
