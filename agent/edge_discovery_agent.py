@@ -17,6 +17,7 @@ Usage:
     python agent/edge_discovery_agent.py --all-sports --upcoming --save
 """
 import argparse
+import csv
 import json
 import os
 import sys
@@ -68,6 +69,9 @@ MONITOR_CACHE = os.path.join(BASE, "data", "monitor_cache.json")
 # How long to suppress re-evaluation after each verdict type
 SKIP_COOLDOWN_HOURS    = 6.0   # HIGH-confidence skips: re-check after 6h
 MONITOR_COOLDOWN_HOURS = 3.0   # MONITOR: re-check after 3h (gap may have closed/grown)
+
+FUNNEL_LOG_FILE = os.path.join(BASE, "data", "funnel_log.json")
+FUNNEL_LOG_MAX  = 200  # keep ~4 days of 30-min runs across both sports
 
 
 def _load_evaluated_tickers() -> tuple[set[str], set[str]]:
@@ -133,6 +137,33 @@ def _update_monitor_cache(event_tickers: list[str]) -> None:
     os.makedirs(os.path.dirname(MONITOR_CACHE), exist_ok=True)
     with open(MONITOR_CACHE, "w") as f:
         json.dump(cache, f, indent=2)
+
+
+def _append_funnel_entry(entry: dict) -> None:
+    log: list = []
+    try:
+        with open(FUNNEL_LOG_FILE) as f:
+            log = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    log.append(entry)
+    log = log[-FUNNEL_LOG_MAX:]
+    os.makedirs(os.path.dirname(os.path.abspath(FUNNEL_LOG_FILE)), exist_ok=True)
+    with open(FUNNEL_LOG_FILE, "w") as f:
+        json.dump(log, f, indent=2)
+
+
+def _sum_last_n_costs(n: int) -> float:
+    """Sum the last n rows in agent_cost_log.csv — used to capture per-run API cost."""
+    if n <= 0:
+        return 0.0
+    cost_log = os.path.join(BASE, "data", "agent_cost_log.csv")
+    try:
+        with open(cost_log, newline="") as f:
+            rows = list(csv.DictReader(f))
+        return round(sum(float(r.get("estimated_cost_usd", 0)) for r in rows[-n:]), 6)
+    except Exception:
+        return 0.0
 
 
 def _make_trade_record(c: dict, snap_time: str) -> dict:
@@ -704,6 +735,20 @@ def _run_sport(
     above = [c for c in candidates if c["best_abs_gap"] >= MIN_GAP]
     verdicts: list[dict] = []
 
+    funnel: dict = {
+        "run_at":           datetime.now(timezone.utc).isoformat(),
+        "sport":            sport,
+        "total_scanned":    len(candidates),
+        "above_threshold":  len(above),
+        "already_traded":   0,
+        "on_cooldown":      0,
+        "researched":       0,
+        "trade_verdicts":   0,
+        "skip_verdicts":    0,
+        "monitor_verdicts": 0,
+        "api_cost_usd":     0.0,
+    }
+
     if above and not no_research:
         traded_tickers, cooldown_tickers = _load_evaluated_tickers()
 
@@ -712,10 +757,13 @@ def _run_sport(
             et = c.get("event_ticker", "")
             if et in traded_tickers:
                 print(f"  [SKIP] Already traded: {c['game']} — {c['team']}")
+                funnel["already_traded"] += 1
             elif et in cooldown_tickers:
                 print(f"  [COOLDOWN] Recently evaluated: {c['game']} — {c['team']}")
+                funnel["on_cooldown"] += 1
             else:
                 filtered.append(c)
+        funnel["researched"] = len(filtered)
 
         if not filtered:
             print(f"\n  All {len(above)} candidate(s) are in cooldown — no research calls needed.")
@@ -743,7 +791,12 @@ def _run_sport(
             _log(f"  {c['game']} | {c['team']} | gap={c['best_abs_gap']:.1%} | "
                  f"{rec} ({conf}) via {c['best_book'].upper()}")
 
-            if rec == "MONITOR":
+            if rec == "TRADE":
+                funnel["trade_verdicts"] += 1
+            elif rec == "SKIP":
+                funnel["skip_verdicts"] += 1
+            else:
+                funnel["monitor_verdicts"] += 1
                 monitor_tickers.append(c.get("event_ticker", ""))
 
         if monitor_tickers:
@@ -762,6 +815,7 @@ def _run_sport(
 
         snap_time = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
         _log_edge_trades(trades, skips, snap_time)
+        funnel["api_cost_usd"] = _sum_last_n_costs(funnel["researched"])
 
     elif above:
         print(f"\n  [--no-research] Skipping research agent.")
@@ -782,6 +836,7 @@ def _run_sport(
 
     trade_ct = len([v for v in verdicts if isinstance(v, dict) and v.get("research", {}).get("recommendation") == "TRADE"])
     _log(f"Edge discovery complete [{sport.upper()}] — {len(above)} candidate(s), {trade_ct} TRADE signal(s)")
+    _append_funnel_entry(funnel)
 
 
 def main() -> None:

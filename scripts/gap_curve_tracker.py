@@ -16,6 +16,7 @@ Run as a long-running daemon (systemd Type=simple, Restart=always):
 Or smoke-test locally with a short interval:
     GAP_TRACKER_INTERVAL=30 python scripts/gap_curve_tracker.py
 """
+import json
 import os
 import sys
 import sqlite3
@@ -316,6 +317,75 @@ def build_rows(
     return rows
 
 
+# ── Gap Analysis JSON Export ──────────────────────────────────────────────────
+
+GAP_ANALYSIS_PATH = os.path.join(BASE, "data", "gap_curve_analysis.json")
+
+_BUCKET_SQL = """
+    SELECT sport,
+           CASE
+               WHEN seconds_to_close < 7200  THEN '0-2h'
+               WHEN seconds_to_close < 21600 THEN '2-6h'
+               WHEN seconds_to_close < 43200 THEN '6-12h'
+               WHEN seconds_to_close < 86400 THEN '12-24h'
+               ELSE '24h+'
+           END AS bucket,
+           AVG(abs_gap) AS avg_abs_gap
+    FROM gap_curves
+    WHERE snapshot_utc > datetime('now', '-7 days')
+      AND seconds_to_close IS NOT NULL
+    GROUP BY sport, bucket
+"""
+
+_MARKETS_SQL = """
+    SELECT sport, COUNT(DISTINCT market_ticker) AS markets_tracked
+    FROM gap_curves
+    WHERE snapshot_utc > datetime('now', '-7 days')
+    GROUP BY sport
+"""
+
+_TOTAL_SQL = """
+    SELECT sport, COUNT(*) AS total_data_points
+    FROM gap_curves
+    WHERE snapshot_utc > datetime('now', '-7 days')
+    GROUP BY sport
+"""
+
+
+def write_gap_analysis_json() -> None:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        bucket_rows  = conn.execute(_BUCKET_SQL).fetchall()
+        markets_rows = conn.execute(_MARKETS_SQL).fetchall()
+        totals_rows  = conn.execute(_TOTAL_SQL).fetchall()
+        conn.close()
+    except Exception:
+        return
+
+    sports: dict = {}
+    for sport, bucket, avg_gap in bucket_rows:
+        s = sport.lower()
+        sports.setdefault(s, {"markets_tracked": 0, "total_data_points": 0,
+                               "avg_gap_by_hours_to_game": {}})
+        sports[s]["avg_gap_by_hours_to_game"][bucket] = round(float(avg_gap), 4)
+
+    for sport, count in markets_rows:
+        sports.setdefault(sport.lower(), {})["markets_tracked"] = count
+
+    for sport, count in totals_rows:
+        sports.setdefault(sport.lower(), {})["total_data_points"] = count
+
+    output = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sports": sports,
+    }
+    try:
+        with open(GAP_ANALYSIS_PATH, "w") as f:
+            json.dump(output, f, indent=2)
+    except Exception:
+        pass
+
+
 # ── Main Loop ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -344,6 +414,7 @@ def main() -> None:
         if total_written:
             log(f"  Cycle done — {total_written} new rows total")
 
+        write_gap_analysis_json()
         time.sleep(POLL_INTERVAL)
 
 

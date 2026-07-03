@@ -417,9 +417,15 @@ for col, label, val, sub in _cards:
 
 st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
 
+# ─── SESSION STATE ────────────────────────────────────────────────────────────
+if "memory_chat_history" not in st.session_state:
+    st.session_state.memory_chat_history = []
+if "memory_agent" not in st.session_state:
+    st.session_state.memory_agent = None
+
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab_mlb, tab_wnba, tab_curves, tab_log, tab_perf, tab_sandbox, tab_sys = st.tabs([
-    "⚾ MLB", "🏀 WNBA", "📉 Gap Curves", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System"
+tab_mlb, tab_wnba, tab_curves, tab_log, tab_perf, tab_sandbox, tab_sys, tab_intel = st.tabs([
+    "⚾ MLB", "🏀 WNBA", "📉 Gap Curves", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System", "🧠 Intelligence"
 ])
 
 
@@ -448,8 +454,9 @@ with tab_mlb:
         except Exception:
             hours = None
 
-        # Drop only games that ended >4h ago (Kalshi settled)
-        if hours is not None and hours < -4:
+        # Only show markets that haven't started yet — in-progress Kalshi prices
+        # diverge from pre-game lines and create spurious gap signals
+        if hours is not None and hours < 0:
             continue
 
         if game_dt.astimezone(ET).date() == today_et_date:
@@ -1603,6 +1610,94 @@ with tab_sys:
             f"🔴 {n_fail} condition{'s' if n_fail != 1 else ''} pending — Continue paper trading</div>",
             unsafe_allow_html=True,
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB — INTELLIGENCE AGENT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_intel:
+    st.subheader("EdgeFund Intelligence Agent")
+    st.caption("Ask anything about the system, trades, statistics, or architecture")
+
+    # Lazy-init agent (loads all context files once per session)
+    if st.session_state.memory_agent is None:
+        with st.spinner("Loading system knowledge..."):
+            try:
+                from agent.memory_agent import MemoryAgent
+                st.session_state.memory_agent = MemoryAgent()
+            except Exception as _init_err:
+                st.error(f"Agent init failed: {_init_err}")
+
+    _agent = st.session_state.memory_agent
+
+    # Suggested question chips
+    st.markdown("**Suggested questions:**")
+    _chips = [
+        "Why do large gap trades lose?",
+        "What is our current edge and confidence level?",
+        "Walk me through our best trade",
+        "How does the research agent work?",
+        "What should I tell YC about our win rate?",
+        "Why was the last trade skipped?",
+        "How much have we spent on API calls?",
+        "What does the gap curve tracker tell us?",
+    ]
+    _chip_cols = st.columns(4)
+    _chip_clicked: str | None = None
+    for _i, _chip in enumerate(_chips):
+        if _chip_cols[_i % 4].button(_chip, key=f"intel_chip_{_i}"):
+            _chip_clicked = _chip
+
+    st.divider()
+
+    # Render existing conversation history
+    for _msg in st.session_state.memory_chat_history:
+        with st.chat_message(_msg["role"]):
+            st.markdown(_msg["content"])
+            if _msg["role"] == "assistant" and _msg.get("footer"):
+                st.caption(_msg["footer"])
+
+    # Accept new input — chip click takes priority over typed input
+    _question = _chip_clicked or st.chat_input("Ask a question about EdgeFund...")
+
+    if _question and _agent is not None:
+        with st.chat_message("user"):
+            st.markdown(_question)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    _answer = _agent.query(
+                        _question,
+                        [{"role": m["role"], "content": m["content"]}
+                         for m in st.session_state.memory_chat_history],
+                    )
+                    st.markdown(_answer)
+                    _s = _agent.context_stats
+                    _footer = (
+                        f"Based on {_s['n_trades']} trades, "
+                        f"{_s['n_skipped']} skipped trades, "
+                        f"{_s['days_active']} days of data"
+                    )
+                    st.caption(_footer)
+                except Exception as _q_err:
+                    _answer = f"Error calling agent: {_q_err}"
+                    _footer = ""
+                    st.error(_answer)
+
+        st.session_state.memory_chat_history.append(
+            {"role": "user", "content": _question}
+        )
+        st.session_state.memory_chat_history.append(
+            {"role": "assistant", "content": _answer, "footer": _footer}
+        )
+
+    # Clear button (only shown when there's history)
+    if st.session_state.memory_chat_history:
+        if st.button("Clear conversation", key="intel_clear"):
+            st.session_state.memory_chat_history = []
+            st.session_state.memory_agent = None
+            st.rerun()
 
 
 # ─── FOOTER ───────────────────────────────────────────────────────────────────
