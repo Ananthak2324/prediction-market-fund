@@ -380,7 +380,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─── METRIC CARDS ─────────────────────────────────────────────────────────────
-wr1     = summary.get("win_rate_tier_c")
+wr1     = summary.get("win_rate_tier_a")
 total   = summary.get("total_logged", 0)
 res_ct  = summary.get("total_resolved", 0)
 pval    = summary.get("p_value")
@@ -399,7 +399,7 @@ pv_sub = ("Significant ✓"        if pval and pval < 0.05 else
 
 mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
 _cards = [
-    (mc1, "Win Rate (Tier C)",  f"<span class='{wr_cls}'>{fmt_pct(wr1)}</span>",           "gap ≥15% only"),
+    (mc1, "Win Rate (Tier A)",  f"<span class='{wr_cls}'>{fmt_pct(wr1)}</span>",           "gap 5-10% only"),
     (mc2, "Trades Logged",  f"<span class='teal'>{total}</span>",                      "&nbsp;"),
     (mc3, "Resolved",       f"<span class='teal'>{res_ct}</span>",                     f"of {total} total"),
     (mc4, "Avg Gap",        f"<span class='teal'>{fmt_pct(avg_gap)}</span>",           "all trades"),
@@ -1570,7 +1570,7 @@ with tab_sys:
     st.markdown("**LIVE CONDITIONS GATE**")
 
     clean_res = summary.get("clean_trades", {}).get("resolved", 0)
-    wr_t1_val = summary.get("win_rate_tier_c") or 0
+    wr_t1_val = summary.get("win_rate_tier_a") or 0
 
     agent_all_covered = (
         not trades_df.empty
@@ -1581,7 +1581,7 @@ with tab_sys:
     conditions = [
         ("14+ days of clean snapshot data",        n_snap_days >= 14),
         ("30+ resolved clean trades",              clean_res >= 30),
-        ("Win rate ≥ 58% on Tier C",                wr_t1_val >= 0.58),
+        ("Win rate ≥ 58% on Tier A",                wr_t1_val >= 0.58),
         ("P-value < 0.10",                         pval is not None and pval < 0.10),
         ("Agent attached to all trades",           agent_all_covered),
         ("Position manager tested (5+ cycles)",    False),
