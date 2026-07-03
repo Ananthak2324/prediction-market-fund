@@ -251,6 +251,8 @@ def _log_edge_trades(trade_signals: list[dict], skip_signals: list[dict], snap_t
                           "hours_before_game", "timing_suspect")
             } | {
                 "skipped_at":        datetime.now(timezone.utc).isoformat(),
+                "pre_filter_skip":   False,
+                "skip_reason":       verdict.get("skip_reason"),
                 "agent_reasoning":   verdict.get("reasoning"),
                 "news_found":        verdict.get("news_found"),
                 "news_detail":       verdict.get("news_detail"),
@@ -736,22 +738,39 @@ def _run_sport(
     verdicts: list[dict] = []
 
     funnel: dict = {
-        "run_at":           datetime.now(timezone.utc).isoformat(),
-        "sport":            sport,
-        "total_scanned":    len(candidates),
-        "above_threshold":  len(above),
-        "already_traded":   0,
-        "on_cooldown":      0,
-        "researched":       0,
-        "trade_verdicts":   0,
-        "skip_verdicts":    0,
-        "monitor_verdicts": 0,
-        "api_cost_usd":     0.0,
+        "run_at":             datetime.now(timezone.utc).isoformat(),
+        "sport":              sport,
+        "total_scanned":      len(candidates),
+        "above_threshold":    len(above),
+        "already_traded":     0,
+        "on_cooldown":        0,
+        "pre_filter_skipped": 0,
+        "researched":         0,
+        "trade_verdicts":     0,
+        "skip_verdicts":      0,
+        "monitor_verdicts":   0,
+        "api_cost_usd":       0.0,
     }
 
     if above and not no_research:
         traded_tickers, cooldown_tickers = _load_evaluated_tickers()
 
+        # Load trade list for pre_filter kalshi_ticker duplicate check
+        existing_trades_list: list[dict] = []
+        if os.path.exists(TRADES_FILE):
+            try:
+                with open(TRADES_FILE) as f:
+                    existing_trades_list = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        try:
+            from agent.pre_filter import pre_filter as _pre_filter
+        except ImportError:
+            from pre_filter import pre_filter as _pre_filter  # type: ignore
+
+        snap_now = datetime.now(timezone.utc)
+        pf_skipped_candidates: list[dict] = []
         filtered = []
         for c in above:
             et = c.get("event_ticker", "")
@@ -762,8 +781,52 @@ def _run_sport(
                 print(f"  [COOLDOWN] Recently evaluated: {c['game']} — {c['team']}")
                 funnel["on_cooldown"] += 1
             else:
-                filtered.append(c)
+                pf = _pre_filter(c, existing_trades_list, snap_now)
+                if pf["action"] == "SKIP":
+                    print(f"  [PRE_FILTER] {c['game']} — {c['team']}: {pf['reason']}")
+                    funnel["pre_filter_skipped"] += 1
+                    pf_skipped_candidates.append({**c, "_pre_filter_reason": pf["reason"]})
+                else:
+                    filtered.append(c)
         funnel["researched"] = len(filtered)
+
+        # Log pre-filter skips to skipped_trades.json
+        if pf_skipped_candidates:
+            pf_skipped_list: list[dict] = []
+            if os.path.exists(SKIPPED_FILE):
+                try:
+                    with open(SKIPPED_FILE) as f:
+                        pf_skipped_list = json.load(f)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            pf_snap_str = snap_now.strftime("%Y-%m-%d_%H%M")
+            for c in pf_skipped_candidates:
+                pf_skipped_list.append({
+                    "trade_id":          f"{pf_snap_str}|{c.get('event_ticker', '')}",
+                    "event_ticker":      c.get("event_ticker", ""),
+                    "kalshi_ticker":     c.get("kalshi_ticker", ""),
+                    "game":              c.get("game", ""),
+                    "team":              c.get("team", ""),
+                    "signal":            c.get("signal", ""),
+                    "gap":               c.get("gap"),
+                    "abs_gap":           c.get("best_abs_gap"),
+                    "start_utc":         c.get("start_utc", ""),
+                    "snapshot_time":     snap_now.isoformat(),
+                    "hours_before_game": c.get("hours_before_game"),
+                    "timing_suspect":    (c.get("hours_before_game") or 0) > 3.0,
+                    "skipped_at":        snap_now.isoformat(),
+                    "pre_filter_skip":   True,
+                    "skip_reason":       c.get("_pre_filter_reason", ""),
+                    "agent_reasoning":   None,
+                    "news_found":        None,
+                    "news_detail":       None,
+                    "pinnacle_stable":   None,
+                    "pinnacle_movement": None,
+                    "weather_issue":     None,
+                })
+            os.makedirs(os.path.dirname(SKIPPED_FILE), exist_ok=True)
+            with open(SKIPPED_FILE, "w") as f:
+                json.dump(pf_skipped_list, f, indent=2)
 
         if not filtered:
             print(f"\n  All {len(above)} candidate(s) are in cooldown — no research calls needed.")
@@ -813,7 +876,7 @@ def _run_sport(
         else:
             print(f"\n  No TRADE signals after research.")
 
-        snap_time = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
+        snap_time = snap_now.strftime("%Y-%m-%d_%H%M")
         _log_edge_trades(trades, skips, snap_time)
         funnel["api_cost_usd"] = _sum_last_n_costs(funnel["researched"])
 

@@ -75,28 +75,61 @@ PRICE_OUTPUT        = 15.00
 PRICE_PER_SEARCH    = 0.01
 
 
-_BASE_SYSTEM = f"""You are a sports prediction market research analyst trained by a professional sports bettor with expertise across MLB, NFL, NBA, and soccer.
+_BASE_SYSTEM = """\
+You are the EdgeFund Research Analyst — an expert in sports prediction market \
+pricing dynamics.
 
-Your job is to analyze pricing gaps between Vegas sportsbook consensus (Pinnacle) and Kalshi prediction market contracts. You will be given a hypothesis about the type of edge and specific research priorities. Focus your investigation on the provided checklist.
+YOUR PRIMARY JOB IS NOT TO FILTER TRADES.
+Your primary job is to EXPLAIN why a gap exists and provide behavioral context \
+for the trade.
 
-SIGNALS THAT MEAN THE GAP IS INFORMATION-DRIVEN — SKIP:
-- Starting pitcher scratched or changed within 6 hours
-- Key position player (top 3 hitter or cleanup) ruled out
-- Pinnacle line has moved more than {PINNACLE_MOVEMENT_THRESHOLD:.0%} since market open — sharp money is moving
-- Significant weather event (wind 15+ mph blowing in at a baseball stadium)
-- Bullpen heavily used in previous 2 days for the favored team
-- Any credible injury report affecting a starter
+You should issue SKIP only in rare, specific circumstances. Most gaps are \
+behavioral and should be traded.
 
-SIGNALS THAT MEAN THE GAP IS BEHAVIORAL — TRADE:
-- No lineup changes from expected starting roster
-- Starting pitcher confirmed and healthy
-- Pinnacle line has been stable for 3+ hours
-- Gap is concentrated on a heavily favored team (Vegas 65%+) — favorite-longshot bias
-- No injury news in the last 6 hours for either team
-- Public narrative favors underdog (recent winning streak, nationally televised game, popular team)
-- Home team overpriced by Kalshi retail crowd
+THE PINNACLE STABILITY RULE — YOUR MOST IMPORTANT RULE:
+Pinnacle is the sharpest sportsbook in the world. If Pinnacle's line has been \
+stable for the last 3 hours, it means sharp money has evaluated all available \
+information and decided not to move. A stable Pinnacle line is the strongest \
+possible signal that any injury or news you find has ALREADY BEEN PRICED IN.
 
-Always weight information signals above behavioral signals. One confirmed injury to a starter overrides any number of behavioral signals pointing to TRADE."""
+WHEN TO ISSUE SKIP — only these specific situations:
+1. Breaking news < 48 hours old that represents a genuine STATUS CHANGE:
+   - Starting pitcher confirmed scratch TODAY
+   - Key position player (top 3 hitter or cleanup) ruled out TODAY
+   - NOT: chronic IL players out for weeks or months
+   - NOT: injury updates on players already known to be out
+   - NOT: historical injury mentions in any article
+   - NOT: "returning from injury" — that is the pitcher STARTING, not being scratched
+
+2. Pinnacle line has moved > 3 percentage points in the last 3 hours
+   (sharp money is reacting to something — trust them)
+
+WHEN TO ISSUE TRADE — everything else:
+- Long-term IL players already known for 48+ hours: TRADE (Pinnacle already priced this)
+- Acuña, Strider, Seager, any chronic IL player: TRADE (not new information)
+- Favorable/unfavorable pitching matchup: TRADE (already in Pinnacle's line)
+- Home/away splits, recent form, weather forecasts: TRADE (Pinnacle priced these)
+- No injury news found at all: TRADE with HIGH confidence
+- Pitcher returning from IL (is healthy enough to START): TRADE
+
+BEHAVIORAL EXPLANATION — required on every response:
+Even when issuing TRADE, explain WHY the gap exists. What specific behavioral \
+bias is causing Kalshi retail to misprice this game?
+
+Common patterns to identify:
+- HOME_PREMIUM: retail overprices home teams regardless of matchup quality
+- NAME_RECOGNITION: famous franchise or star player name drives Kalshi price
+- FAVORITE_LONGSHOT: retail systematically undervalues heavy favorites (65%+ true prob)
+- RECENCY: recent winning/losing streak overweighted vs. season-long quality
+- PUBLIC_NARRATIVE: media storyline driving Kalshi crowd (rivalry game, playoff race)
+
+THE SEARCH QUERY — always search for:
+  "{home_team} {away_team} starting lineup injury scratch last 24 hours {date}"
+
+Adding "last 24 hours" biases results toward recent news. If search returns only \
+old injury articles with no new developments, that confirms the gap is behavioral \
+and you should issue TRADE.\
+"""
 
 # Cached system prompt — cuts input cost 90% after the first call
 _CACHED_SYSTEM = [
@@ -128,41 +161,54 @@ _DEFAULT_EDGE_CONTEXT: dict = {
 
 def _build_verdict_prompt(edge_context: dict) -> str:
     """Build the second-turn JSON verdict prompt with edge-type-specific decision rules."""
-    edge_type = edge_context.get("edge_type", "BEHAVIORAL_RETAIL")
+    edge_type    = edge_context.get("edge_type", "BEHAVIORAL_RETAIL")
     initial_lean = edge_context.get("initial_lean", "MONITOR")
+
     rules = {
-        "MARKET_ANOMALY":       "SKIP unless you found a specific behavioral reason for the gap. MONITOR if inconclusive.",
-        "SHARP_SIGNAL":         "SKIP by default. MONITOR only if zero news found and line appears stale. Never TRADE a sharp signal.",
-        "MULTI_BOOK_CONSENSUS": "TRADE if no disqualifying news. SKIP if real news explains the Kalshi price.",
-        "RETAIL_BOOK_SOFT":     "MONITOR — only TRADE if DK/FanDuel confirmed stale with a specific reason.",
-        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and no disqualifying news. SKIP if injury/news/weather found.",
+        "MARKET_ANOMALY":       "SKIP only if you found fresh news (<48h) with a genuine status change today. TRADE if gap is behavioral and Pinnacle is stable.",
+        "SHARP_SIGNAL":         "SKIP if Pinnacle moved >3pp AND you found confirming news. MONITOR if zero news found. TRADE is appropriate if Pinnacle has since stabilised.",
+        "MULTI_BOOK_CONSENSUS": f"TRADE if no fresh status-change news found. SKIP only for confirmed new scratches or ruled-out players today. Gap ≥ {TIER2_MIN_GAP:.0%} required.",
+        "RETAIL_BOOK_SOFT":     "TRADE if no news found and Pinnacle is stable. MONITOR only if evidence is genuinely ambiguous.",
+        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and no fresh status-change news. SKIP only for breaking news TODAY — not chronic conditions.",
     }
-    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} and clean. SKIP if news found.")
+    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER2_MIN_GAP:.0%} with no fresh status-change news.")
 
     return (
-        "Based on the search results above and all game context provided, return ONLY this JSON object "
-        "(no preamble, no markdown fences):\n"
+        "Based on your research above, return ONLY this exact JSON object "
+        "(no preamble, no markdown fences, no backticks):\n\n"
         "{\n"
-        '  "news_found":          true or false,\n'
-        '  "news_detail":         "specific finding or null",\n'
-        '  "news_source":         "url or null",\n'
-        '  "pitcher_confirmed":   true or false or null,\n'
-        '  "weather_issue":       true or false,\n'
-        '  "pinnacle_stable":     true or false,\n'
-        '  "pinnacle_movement":   float or null,\n'
-        '  "gap_type":            "BEHAVIORAL" or "INFORMATIONAL",\n'
-        '  "confidence":          "HIGH" or "MEDIUM" or "LOW",\n'
-        '  "recommendation":      "TRADE" or "SKIP" or "MONITOR",\n'
-        '  "reasoning":           "2-3 sentence plain English explanation",\n'
-        '  "gap_explanation":     "one sentence explaining why the gap exists"\n'
+        '  "recommendation": "TRADE" or "SKIP" or "MONITOR",\n'
+        '  "confidence": "HIGH" or "MEDIUM" or "LOW",\n'
+        '  "reasoning": "2-3 sentence plain English explanation",\n\n'
+        '  "disqualifier_check": {\n'
+        '    "news_found": true or false,\n'
+        '    "news_is_recent": true or false  (is this news from TODAY or YESTERDAY specifically?),\n'
+        '    "news_age_estimate": "today" or "this week" or "older"  (how old is the news?),\n'
+        '    "news_detail": "specific finding, or null if nothing found",\n'
+        '    "news_source": "url or null",\n'
+        '    "is_status_change": true or false  (is this a NEW status change, not a chronic condition?),\n'
+        '    "pitcher_confirmed": true or false or null,\n'
+        '    "weather_issue": true or false,\n'
+        '    "pinnacle_stable": true or false,\n'
+        '    "pinnacle_movement": float or null\n'
+        "  },\n\n"
+        '  "behavioral_analysis": {\n'
+        '    "gap_type": "BEHAVIORAL" or "INFORMATIONAL",\n'
+        '    "primary_bias": one of "HOME_PREMIUM" / "NAME_RECOGNITION" / "FAVORITE_LONGSHOT" / "RECENCY" / "PUBLIC_NARRATIVE" / "UNKNOWN",\n'
+        '    "explanation": "2-3 sentence explanation of why retail Kalshi pricing diverges from sharp Pinnacle consensus"\n'
+        "  },\n\n"
+        '  "skip_reason": "NEW_INJURY" or "PINNACLE_MOVED" or null\n'
         "}\n\n"
         f"EDGE TYPE: {edge_type}  |  Initial data lean: {initial_lean}\n"
-        f"Edge-specific decision rule: {rule}\n\n"
-        "Override rules (always apply regardless of edge type):\n"
-        "  SKIP if any of: news_found=true, pinnacle_stable=false, weather_issue=true\n"
-        f"  HIGH confidence TRADE: news_found=false, pinnacle_stable=true, weather_issue=false, abs_gap >= {TIER1_MIN_GAP}\n"
-        f"  MEDIUM confidence TRADE: news_found=false, pinnacle_stable=true, weather_issue=false, abs_gap >= {TIER2_MIN_GAP}\n"
-        "  MONITOR: everything else that is not SKIP"
+        f"Edge-specific rule: {rule}\n\n"
+        "CRITICAL REMINDERS:\n"
+        "- Long-term IL players (out weeks/months) are NOT disqualifiers — Pinnacle already priced them\n"
+        "- 'Returning from IL' means the pitcher IS STARTING — that is NOT a scratch\n"
+        "- Only SKIP for genuine status changes announced TODAY\n"
+        "- A stable Pinnacle line confirms all known information is already priced in\n"
+        "- Fill out behavioral_analysis even when issuing SKIP\n"
+        f"- HIGH confidence TRADE: no news, Pinnacle stable, abs_gap ≥ {TIER1_MIN_GAP:.0%}\n"
+        f"- MEDIUM confidence TRADE: no disqualifying news, Pinnacle stable, abs_gap ≥ {TIER2_MIN_GAP:.0%}\n"
     )
 
 
@@ -346,7 +392,7 @@ def _build_user_message(
             f"(now {current_pinnacle:.1%})."
         )
 
-    search_query = f"{home} {away} starting pitcher lineup injury scratch {date}"
+    search_query = f"{home} {away} starting lineup injury scratch last 24 hours {date}"
 
     return (
         f"{edge_block}"
@@ -388,6 +434,12 @@ def _parse_verdict(text: str) -> dict | None:
 
 def _default_verdict(reason: str, is_error: bool = True) -> dict:
     return {
+        "recommendation":    "MONITOR",
+        "confidence":        "LOW",
+        "reasoning":         reason,
+        # flat fields (backward compat with _make_trade_record)
+        "gap_type":          "BEHAVIORAL",
+        "gap_explanation":   "Unable to analyze — defaulted to MONITOR",
         "news_found":        False,
         "news_detail":       None,
         "news_source":       None,
@@ -395,16 +447,86 @@ def _default_verdict(reason: str, is_error: bool = True) -> dict:
         "weather_issue":     False,
         "pinnacle_stable":   True,
         "pinnacle_movement": None,
-        "gap_type":          "BEHAVIORAL",
-        "confidence":        "LOW",
-        "recommendation":    "MONITOR",
-        "reasoning":         reason,
-        "gap_explanation":   "Unable to analyze — defaulted to MONITOR",
+        # enriched fields
+        "news_is_recent":    False,
+        "news_age_estimate": "",
+        "is_status_change":  False,
+        "primary_bias":      "UNKNOWN",
+        "behavioral_analysis": {},
+        "skip_reason":       None,
         "_agent_error":      is_error,
     }
 
 
+def _normalize_verdict(
+    raw: dict,
+    pinnacle_stable: bool,
+    pinnacle_movement: float | None,
+) -> dict:
+    """
+    Flatten the new nested verdict schema to a flat dict for backward compatibility
+    with _make_trade_record and paper_trades.json field expectations.
+    """
+    dc = raw.get("disqualifier_check") or {}
+    ba = raw.get("behavioral_analysis") or {}
+
+    return {
+        # Core verdict
+        "recommendation":    raw.get("recommendation", "MONITOR"),
+        "confidence":        raw.get("confidence", "LOW"),
+        "reasoning":         raw.get("reasoning", ""),
+        # Flat fields used by _make_trade_record
+        "gap_type":          ba.get("gap_type",    raw.get("gap_type",    "BEHAVIORAL")),
+        "gap_explanation":   ba.get("explanation", raw.get("gap_explanation", "")),
+        "news_found":        dc.get("news_found",        raw.get("news_found",        False)),
+        "news_detail":       dc.get("news_detail",       raw.get("news_detail")),
+        "news_source":       dc.get("news_source",       raw.get("news_source")),
+        "pitcher_confirmed": dc.get("pitcher_confirmed", raw.get("pitcher_confirmed")),
+        "weather_issue":     dc.get("weather_issue",     raw.get("weather_issue",     False)),
+        # Pinnacle — authoritative from direct live check, not agent guess
+        "pinnacle_stable":   pinnacle_stable,
+        "pinnacle_movement": round(pinnacle_movement, 4) if pinnacle_movement is not None else None,
+        # Enriched new fields
+        "news_is_recent":    dc.get("news_is_recent",    True),
+        "news_age_estimate": dc.get("news_age_estimate", ""),
+        "is_status_change":  dc.get("is_status_change",  False),
+        "primary_bias":      ba.get("primary_bias",      "UNKNOWN"),
+        "behavioral_analysis": ba,
+        "skip_reason":       raw.get("skip_reason"),
+        "_raw_response":     raw.get("_raw_response", ""),
+    }
+
+
 # ── Cost tracking ──────────────────────────────────────────────────────────────
+
+_COST_LOG_HEADER = [
+    "timestamp", "game", "input_tokens", "output_tokens",
+    "cache_read_tokens", "search_calls", "estimated_cost_usd",
+    "recommendation", "skip_reason", "news_age",
+]
+
+
+def _migrate_cost_log_header() -> None:
+    """One-time migration: add 3 new columns to existing 7-column CSV rows."""
+    if not os.path.exists(COST_LOG):
+        return
+    try:
+        with open(COST_LOG, newline="") as f:
+            rows = list(csv.reader(f))
+        if not rows or len(rows[0]) >= len(_COST_LOG_HEADER):
+            return  # already migrated or empty
+        rows[0] = _COST_LOG_HEADER
+        for i in range(1, len(rows)):
+            while len(rows[i]) < len(_COST_LOG_HEADER):
+                rows[i].append("")
+        with open(COST_LOG, "w", newline="") as f:
+            csv.writer(f).writerows(rows)
+    except Exception:
+        pass
+
+
+_migrate_cost_log_header()
+
 
 def _print_and_log_cost(
     game_label: str,
@@ -412,6 +534,9 @@ def _print_and_log_cost(
     output_tokens: int,
     cache_read_tokens: int,
     search_calls: int,
+    recommendation: str = "",
+    skip_reason: str | None = None,
+    news_age: str = "",
 ) -> float:
     """Print cost breakdown and append a row to agent_cost_log.csv."""
     input_cost  = (input_tokens       / 1_000_000) * PRICE_INPUT
@@ -433,10 +558,7 @@ def _print_and_log_cost(
     with open(COST_LOG, "a", newline="") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow([
-                "timestamp", "game", "input_tokens", "output_tokens",
-                "cache_read_tokens", "search_calls", "estimated_cost_usd",
-            ])
+            w.writerow(_COST_LOG_HEADER)
         w.writerow([
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             game_label,
@@ -445,6 +567,9 @@ def _print_and_log_cost(
             cache_read_tokens,
             search_calls,
             round(total, 6),
+            recommendation,
+            skip_reason or "",
+            news_age,
         ])
 
     return total
@@ -567,16 +692,31 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
         if verdict is None:
             return _default_verdict("JSON parse failed after retry")
 
-        # Direct Pinnacle check is authoritative
-        verdict["pinnacle_stable"]   = pinnacle_stable
-        verdict["pinnacle_movement"] = (
-            round(pinnacle_movement, 4) if pinnacle_movement is not None else None
-        )
         verdict["_raw_response"] = raw_text
 
-        # Log and print cost
+        # Flatten nested schema → backward-compat flat dict
+        verdict = _normalize_verdict(verdict, pinnacle_stable, pinnacle_movement)
+
+        # News-age override: SKIP → TRADE when agent admits news is old and Pinnacle stable
+        if (
+            verdict.get("recommendation") == "SKIP"
+            and verdict.get("news_age_estimate", "") in ("this week", "older")
+            and verdict.get("pinnacle_stable", True)
+        ):
+            verdict["recommendation"] = "TRADE"
+            verdict["confidence"]     = "MEDIUM"
+            verdict["skip_reason"]    = None
+            verdict["reasoning"]      = (
+                "[auto-override] News is old and Pinnacle is stable — "
+                "chronic condition already priced in. " + verdict.get("reasoning", "")
+            )
+
+        # Log and print cost (with new verdict fields)
         _print_and_log_cost(
-            game_label, total_input, total_output, total_cache, total_searches
+            game_label, total_input, total_output, total_cache, total_searches,
+            recommendation=verdict.get("recommendation", ""),
+            skip_reason=verdict.get("skip_reason"),
+            news_age=verdict.get("news_age_estimate", ""),
         )
 
         return verdict
