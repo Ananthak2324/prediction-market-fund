@@ -286,14 +286,21 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                     skipped_count += 1
                     continue
 
+                # Reject impossible Pinnacle lines before hitting the agent — a v_prob
+                # below 20% in a regular season MLB/WNBA game is a data-matching error,
+                # not a real edge.
+                v_prob = trade.get("v_prob") or 0
+                if v_prob < 0.20:
+                    print(f"  [DATA ERROR] {trade['game']} v_prob={v_prob:.1%} — implausible Pinnacle line, skipping")
+                    continue
+
                 # Run agent before logging — it is the barrier between detection and execution
                 if _AGENT_AVAILABLE:
                     try:
                         verdict = _agent_run(_build_agent_game_dict(trade))
                     except Exception as _agent_err:
-                        print(f"  [AGENT ERROR] {trade['game']}: {_agent_err} — logging as MONITOR")
-                        verdict = {"recommendation": "MONITOR", "confidence": "LOW",
-                                   "reasoning": f"Agent call failed: {_agent_err}"}
+                        print(f"  [AGENT ERROR] {trade['game']}: {_agent_err} — not logging")
+                        continue  # API failure → do not log, do not guess
                     rec = verdict.get("recommendation", "MONITOR")
                     trade.update(_agent_fields(verdict))
                     print(f"  [AGENT] {trade['game']} → {rec} ({verdict.get('confidence','?')})")
@@ -302,6 +309,10 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                         skipped_count += 1
                         this_run_skipped.add(event_ticker)
                         continue  # Do not log to paper_trades
+                    elif rec != "TRADE":
+                        # MONITOR or any unrecognised verdict — hold, do not log
+                        print(f"  [MONITOR] {trade['game']} — held for re-evaluation, not logged")
+                        continue
                 else:
                     trade["agent_verdict"] = None
 
