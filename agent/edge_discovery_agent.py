@@ -61,8 +61,78 @@ ET          = ZoneInfo("America/New_York")
 
 # ── paper-trade wiring ────────────────────────────────────────────────────────
 
-TRADES_FILE  = os.path.join(BASE, "data", "paper_trades.json")
-SKIPPED_FILE = os.path.join(BASE, "data", "skipped_trades.json")
+TRADES_FILE   = os.path.join(BASE, "data", "paper_trades.json")
+SKIPPED_FILE  = os.path.join(BASE, "data", "skipped_trades.json")
+MONITOR_CACHE = os.path.join(BASE, "data", "monitor_cache.json")
+
+# How long to suppress re-evaluation after each verdict type
+SKIP_COOLDOWN_HOURS    = 6.0   # HIGH-confidence skips: re-check after 6h
+MONITOR_COOLDOWN_HOURS = 3.0   # MONITOR: re-check after 3h (gap may have closed/grown)
+
+
+def _load_evaluated_tickers() -> tuple[set[str], set[str]]:
+    """
+    Returns (traded_tickers, cooldown_tickers).
+    - traded_tickers: already logged to paper_trades — never re-research
+    - cooldown_tickers: recently SKIPped or MONITORed — skip until cooldown expires
+    """
+    traded: set[str] = set()
+    cooldown: set[str] = set()
+    now = datetime.now(timezone.utc)
+
+    if os.path.exists(TRADES_FILE):
+        try:
+            with open(TRADES_FILE) as f:
+                for t in json.load(f):
+                    traded.add(t.get("event_ticker", ""))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if os.path.exists(SKIPPED_FILE):
+        try:
+            with open(SKIPPED_FILE) as f:
+                for t in json.load(f):
+                    et = t.get("event_ticker", "")
+                    skipped_at = t.get("skipped_at", "")
+                    try:
+                        age_h = (now - datetime.fromisoformat(skipped_at)).total_seconds() / 3600
+                        if age_h < SKIP_COOLDOWN_HOURS:
+                            cooldown.add(et)
+                    except Exception:
+                        cooldown.add(et)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    if os.path.exists(MONITOR_CACHE):
+        try:
+            with open(MONITOR_CACHE) as f:
+                for et, ts in json.load(f).items():
+                    try:
+                        age_h = (now - datetime.fromisoformat(ts)).total_seconds() / 3600
+                        if age_h < MONITOR_COOLDOWN_HOURS:
+                            cooldown.add(et)
+                    except Exception:
+                        cooldown.add(et)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return traded, cooldown
+
+
+def _update_monitor_cache(event_tickers: list[str]) -> None:
+    cache: dict[str, str] = {}
+    if os.path.exists(MONITOR_CACHE):
+        try:
+            with open(MONITOR_CACHE) as f:
+                cache = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for et in event_tickers:
+        cache[et] = now_iso
+    os.makedirs(os.path.dirname(MONITOR_CACHE), exist_ok=True)
+    with open(MONITOR_CACHE, "w") as f:
+        json.dump(cache, f, indent=2)
 
 
 def _make_trade_record(c: dict, snap_time: str) -> dict:
@@ -635,13 +705,30 @@ def _run_sport(
     verdicts: list[dict] = []
 
     if above and not no_research:
-        print(f"\n  Running research agent on {len(above)} candidate(s)...\n")
+        traded_tickers, cooldown_tickers = _load_evaluated_tickers()
+
+        filtered = []
+        for c in above:
+            et = c.get("event_ticker", "")
+            if et in traded_tickers:
+                print(f"  [SKIP] Already traded: {c['game']} — {c['team']}")
+            elif et in cooldown_tickers:
+                print(f"  [COOLDOWN] Recently evaluated: {c['game']} — {c['team']}")
+            else:
+                filtered.append(c)
+
+        if not filtered:
+            print(f"\n  All {len(above)} candidate(s) are in cooldown — no research calls needed.")
+        else:
+            print(f"\n  Running research agent on {len(filtered)} candidate(s) ({len(above) - len(filtered)} in cooldown)...\n")
+
         try:
             from agent import research_agent
         except ImportError:
             import research_agent  # type: ignore
 
-        for c in above:
+        monitor_tickers: list[str] = []
+        for c in filtered:
             ec = c.get("edge_context", {})
             etype = ec.get("edge_type", "UNKNOWN")
             lean  = ec.get("initial_lean", "?")
@@ -655,6 +742,12 @@ def _run_sport(
             verdicts.append({**c, "research": verdict})
             _log(f"  {c['game']} | {c['team']} | gap={c['best_abs_gap']:.1%} | "
                  f"{rec} ({conf}) via {c['best_book'].upper()}")
+
+            if rec == "MONITOR":
+                monitor_tickers.append(c.get("event_ticker", ""))
+
+        if monitor_tickers:
+            _update_monitor_cache(monitor_tickers)
 
         trades = [v for v in verdicts if v["research"].get("recommendation") == "TRADE"]
         skips  = [v for v in verdicts if v["research"].get("recommendation") == "SKIP"]

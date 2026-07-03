@@ -49,6 +49,8 @@ SNAPSHOT_DIR   = "data/snapshots"
 TRADES_FILE    = "data/paper_trades.json"
 SUMMARY_FILE   = "data/performance_summary.json"
 SKIPPED_FILE   = "data/skipped_trades.json"
+MONITOR_CACHE  = "data/monitor_cache.json"
+MONITOR_COOLDOWN_HOURS = 3.0
 RESOLVE_AFTER  = 0.5   # hours after game start before we attempt resolution (Kalshi handles finalization)
 
 
@@ -189,14 +191,31 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
             for entry in json.load(f):
                 et = entry.get("event_ticker", "")
                 if not et:
-                    # Older records: extract from trade_id format "SNAP_TIME|EVENT_TICKER"
                     tid = entry.get("trade_id", "")
                     et = tid.split("|", 1)[1] if "|" in tid else ""
                 if et:
                     previously_skipped.add(et)
     except (FileNotFoundError, json.JSONDecodeError):
         pass
-    this_run_skipped: set[str] = set()
+
+    # Load MONITORed tickers within cooldown window — don't re-research for 3h
+    monitored_cooldown: set[str] = set()
+    try:
+        from datetime import timezone as _tz
+        _now = datetime.now(_tz.utc)
+        with open(MONITOR_CACHE) as f:
+            for et, ts in json.load(f).items():
+                try:
+                    age_h = (_now - datetime.fromisoformat(ts)).total_seconds() / 3600
+                    if age_h < MONITOR_COOLDOWN_HOURS:
+                        monitored_cooldown.add(et)
+                except Exception:
+                    monitored_cooldown.add(et)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    this_run_skipped:    set[str]  = set()
+    this_run_monitored:  list[str] = []
 
     for snap_file in sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "*.json"))):
         if os.path.basename(snap_file) in ("master_log.json", "missed_snapshots.json"):
@@ -281,9 +300,12 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
             }
 
             if event_ticker not in event_index:
-                # Skip agent call if already confidently rejected for this game
+                # Skip agent call if already confidently rejected or in cooldown
                 if event_ticker in previously_skipped or event_ticker in this_run_skipped:
                     skipped_count += 1
+                    continue
+                if event_ticker in monitored_cooldown:
+                    print(f"  [MONITOR COOLDOWN] {trade['game']} — re-evaluation in <{MONITOR_COOLDOWN_HOURS:.0f}h")
                     continue
 
                 # Reject impossible Pinnacle lines before hitting the agent — a v_prob
@@ -310,8 +332,9 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                         this_run_skipped.add(event_ticker)
                         continue  # Do not log to paper_trades
                     elif rec != "TRADE":
-                        # MONITOR or any unrecognised verdict — hold, do not log
+                        # MONITOR or any unrecognised verdict — hold, cache to suppress reruns
                         print(f"  [MONITOR] {trade['game']} — held for re-evaluation, not logged")
+                        this_run_monitored.append(event_ticker)
                         continue
                 else:
                     trade["agent_verdict"] = None
@@ -367,6 +390,21 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                 existing[event_index[event_ticker]] = trade
                 replaced_count += 1
             # else: already have a clean trade for this game — skip
+
+    # Persist MONITOR cooldowns so the next run doesn't re-research the same games
+    if this_run_monitored:
+        cache: dict[str, str] = {}
+        try:
+            with open(MONITOR_CACHE) as f:
+                cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for et in this_run_monitored:
+            cache[et] = now_iso
+        os.makedirs(os.path.dirname(os.path.abspath(MONITOR_CACHE)), exist_ok=True)
+        with open(MONITOR_CACHE, "w") as f:
+            json.dump(cache, f, indent=2)
 
     return existing, new_count, replaced_count, skipped_count
 
