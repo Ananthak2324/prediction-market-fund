@@ -1017,6 +1017,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run",   action="store_true", help="Resolve but don't write files")
     parser.add_argument("--force-all", action="store_true", help="Re-resolve all trades including already-resolved")
+    parser.add_argument("--no-ingest", action="store_true",
+                         help="Skip ingesting new trades from snapshots — resolve/settle existing trades only. "
+                              "Used to halt new trade generation while letting open positions run to resolution.")
     args = parser.parse_args()
 
     if args.force_all:
@@ -1026,13 +1029,16 @@ def main() -> None:
         trades = load_trades()
 
     # 1. Ingest new trades from snapshots (agent gates every new trade)
-    trades, new_count, replaced_count, skipped_count = ingest_new_trades(trades)
-    backfilled = backfill_timing(trades)
-    if backfilled:
-        print(f"Backfilled timing fields for {backfilled} existing trade(s).")
-    if replaced_count:
-        print(f"Replaced {replaced_count} timing-suspect trade(s) with cleaner snapshot(s).")
-    print(f"Ingested {new_count} new trade(s) from snapshots.  Skipped by agent: {skipped_count}")
+    if args.no_ingest:
+        print("[--no-ingest] Skipping new trade ingestion — resolving existing trades only.")
+    else:
+        trades, new_count, replaced_count, skipped_count = ingest_new_trades(trades)
+        backfilled = backfill_timing(trades)
+        if backfilled:
+            print(f"Backfilled timing fields for {backfilled} existing trade(s).")
+        if replaced_count:
+            print(f"Replaced {replaced_count} timing-suspect trade(s) with cleaner snapshot(s).")
+        print(f"Ingested {new_count} new trade(s) from snapshots.  Skipped by agent: {skipped_count}")
     print(f"Total trades: {len(trades)}  |  Open: {sum(1 for t in trades if t['outcome'] is None)}")
 
     # 2. Resolve eligible open trades + shadow-resolve skipped trades
