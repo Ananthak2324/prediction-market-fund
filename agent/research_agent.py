@@ -31,125 +31,17 @@ load_dotenv()
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.utils import remove_vig
+from core.desk_loader import DeskConfig
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ODDS_KEY      = os.getenv("ODDS_API_KEY", "")
 ODDS_BASE     = os.getenv("ODDS_API_BASE", "https://api.theoddsapi.com")
-MODEL         = "claude-sonnet-4-6"
 
-SPORT_KEYS = {"MLB": "baseball_mlb", "NBA": "basketball_nba"}
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Decision thresholds — single source of truth shared with scripts/update_outcomes.py
-# and scripts/weekly_audit.py. Hand-edit (or let the weekly audit agent propose edits to)
-# agent/thresholds.json rather than changing these defaults.
-THRESHOLDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thresholds.json")
-_DEFAULT_THRESHOLDS = {
-    "pinnacle_movement_threshold": 0.03,
-    "large_gap_warn":              0.20,
-    "tier_a_min_gap":              0.05,
-    "tier_b_min_gap":              0.10,
-    "tier_c_min_gap":              0.15,
-}
-
-
-def _load_thresholds() -> dict:
-    try:
-        with open(THRESHOLDS_FILE) as f:
-            return {**_DEFAULT_THRESHOLDS, **json.load(f)}
-    except Exception:
-        return dict(_DEFAULT_THRESHOLDS)
-
-
-THRESHOLDS = _load_thresholds()
-
-PINNACLE_MOVEMENT_THRESHOLD = THRESHOLDS["pinnacle_movement_threshold"]
-LARGE_GAP_WARN              = THRESHOLDS["large_gap_warn"]
-TIER_A_MIN_GAP              = THRESHOLDS["tier_a_min_gap"]
-TIER_B_MIN_GAP              = THRESHOLDS["tier_b_min_gap"]
-TIER_C_MIN_GAP              = THRESHOLDS["tier_c_min_gap"]
-
-
-def _gap_tier(abs_gap: float) -> str:
-    """A = 5-10%, B = 10-15%, C = 15%+."""
-    if abs_gap >= TIER_C_MIN_GAP:
-        return "C"
-    if abs_gap >= TIER_B_MIN_GAP:
-        return "B"
-    return "A"
-
-COST_LOG = "data/agent_cost_log.csv"
-
-# Pricing per million tokens (Sonnet 4.6)
-PRICE_INPUT         = 3.00
-PRICE_CACHE_READ    = 0.30
-PRICE_OUTPUT        = 15.00
-PRICE_PER_SEARCH    = 0.01
-
-
-_BASE_SYSTEM = """\
-You are the EdgeFund Research Analyst — an expert in sports prediction market \
-pricing dynamics.
-
-YOUR PRIMARY JOB IS NOT TO FILTER TRADES.
-Your primary job is to EXPLAIN why a gap exists and provide behavioral context \
-for the trade.
-
-You should issue SKIP only in rare, specific circumstances. Most gaps are \
-behavioral and should be traded.
-
-THE PINNACLE STABILITY RULE — YOUR MOST IMPORTANT RULE:
-Pinnacle is the sharpest sportsbook in the world. If Pinnacle's line has been \
-stable for the last 3 hours, it means sharp money has evaluated all available \
-information and decided not to move. A stable Pinnacle line is the strongest \
-possible signal that any injury or news you find has ALREADY BEEN PRICED IN.
-
-WHEN TO ISSUE SKIP — only these specific situations:
-1. Breaking news < 48 hours old that represents a genuine STATUS CHANGE:
-   - Starting pitcher confirmed scratch TODAY
-   - Key position player (top 3 hitter or cleanup) ruled out TODAY
-   - NOT: chronic IL players out for weeks or months
-   - NOT: injury updates on players already known to be out
-   - NOT: historical injury mentions in any article
-   - NOT: "returning from injury" — that is the pitcher STARTING, not being scratched
-
-2. Pinnacle line has moved > 3 percentage points in the last 3 hours
-   (sharp money is reacting to something — trust them)
-
-WHEN TO ISSUE TRADE — everything else:
-- Long-term IL players already known for 48+ hours: TRADE (Pinnacle already priced this)
-- Acuña, Strider, Seager, any chronic IL player: TRADE (not new information)
-- Favorable/unfavorable pitching matchup: TRADE (already in Pinnacle's line)
-- Home/away splits, recent form, weather forecasts: TRADE (Pinnacle priced these)
-- No injury news found at all: TRADE with HIGH confidence
-- Pitcher returning from IL (is healthy enough to START): TRADE
-
-BEHAVIORAL EXPLANATION — required on every response:
-Even when issuing TRADE, explain WHY the gap exists. What specific behavioral \
-bias is causing Kalshi retail to misprice this game?
-
-Common patterns to identify:
-- HOME_PREMIUM: retail overprices home teams regardless of matchup quality
-- NAME_RECOGNITION: famous franchise or star player name drives Kalshi price
-- FAVORITE_LONGSHOT: retail systematically undervalues heavy favorites (65%+ true prob)
-- RECENCY: recent winning/losing streak overweighted vs. season-long quality
-- PUBLIC_NARRATIVE: media storyline driving Kalshi crowd (rivalry game, playoff race)
-
-THE SEARCH QUERY — always search for:
-  "{home_team} {away_team} starting lineup injury scratch last 24 hours {date}"
-
-Adding "last 24 hours" biases results toward recent news. If search returns only \
-old injury articles with no new developments, that confirms the gap is behavioral \
-and you should issue TRADE.\
-"""
-
-# Cached system prompt — cuts input cost 90% after the first call
-_CACHED_SYSTEM = [
-    {
-        "type":          "text",
-        "text":          _BASE_SYSTEM,
-        "cache_control": {"type": "ephemeral"},
-    }
-]
+# Retained for any external callers still expecting a module-level default —
+# desk config (desk.get("agent.model")) is authoritative going forward.
+MODEL = "claude-sonnet-4-6"
 
 # Edge-type framing prepended to user message (not system prompt, so cache stays warm)
 _EDGE_FRAMING = {
@@ -170,19 +62,21 @@ _DEFAULT_EDGE_CONTEXT: dict = {
 }
 
 
-def _build_verdict_prompt(edge_context: dict) -> str:
+def _build_verdict_prompt(desk: DeskConfig, edge_context: dict) -> str:
     """Build the second-turn JSON verdict prompt with edge-type-specific decision rules."""
     edge_type    = edge_context.get("edge_type", "BEHAVIORAL_RETAIL")
     initial_lean = edge_context.get("initial_lean", "MONITOR")
+    tier_a_min   = desk.tier_a[0]
+    tier_b_min   = desk.tier_b[0]
 
     rules = {
         "MARKET_ANOMALY":       "SKIP only if you found fresh news (<48h) with a genuine status change today. TRADE if gap is behavioral and Pinnacle is stable.",
         "SHARP_SIGNAL":         "SKIP if Pinnacle moved >3pp AND you found confirming news. MONITOR if zero news found. TRADE is appropriate if Pinnacle has since stabilised.",
-        "MULTI_BOOK_CONSENSUS": f"TRADE if no fresh status-change news found. SKIP only for confirmed new scratches or ruled-out players today. Gap ≥ {TIER_A_MIN_GAP:.0%} required.",
+        "MULTI_BOOK_CONSENSUS": f"TRADE if no fresh status-change news found. SKIP only for confirmed new scratches or ruled-out players today. Gap ≥ {tier_a_min:.0%} required.",
         "RETAIL_BOOK_SOFT":     "TRADE if no news found and Pinnacle is stable. MONITOR only if evidence is genuinely ambiguous.",
-        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {TIER_A_MIN_GAP:.0%} and no fresh status-change news. SKIP only for breaking news TODAY — not chronic conditions.",
+        "BEHAVIORAL_RETAIL":    f"TRADE if gap ≥ {tier_a_min:.0%} and no fresh status-change news. SKIP only for breaking news TODAY — not chronic conditions.",
     }
-    rule = rules.get(edge_type, f"TRADE if gap ≥ {TIER_A_MIN_GAP:.0%} with no fresh status-change news.")
+    rule = rules.get(edge_type, f"TRADE if gap ≥ {tier_a_min:.0%} with no fresh status-change news.")
 
     return (
         "Based on your research above, return ONLY this exact JSON object "
@@ -218,8 +112,8 @@ def _build_verdict_prompt(edge_context: dict) -> str:
         "- Only SKIP for genuine status changes announced TODAY\n"
         "- A stable Pinnacle line confirms all known information is already priced in\n"
         "- Fill out behavioral_analysis even when issuing SKIP\n"
-        f"- HIGH confidence TRADE: no news, Pinnacle stable, abs_gap ≥ {TIER_B_MIN_GAP:.0%}\n"
-        f"- MEDIUM confidence TRADE: no disqualifying news, Pinnacle stable, abs_gap ≥ {TIER_A_MIN_GAP:.0%}\n"
+        f"- HIGH confidence TRADE: no news, Pinnacle stable, abs_gap ≥ {tier_b_min:.0%}\n"
+        f"- MEDIUM confidence TRADE: no disqualifying news, Pinnacle stable, abs_gap ≥ {tier_a_min:.0%}\n"
     )
 
 
@@ -233,17 +127,20 @@ def _teams_match(h1: str, a1: str, h2: str, a2: str) -> bool:
     return _last_word(h1) == _last_word(h2) and _last_word(a1) == _last_word(a2)
 
 
-def _fetch_current_pinnacle(game_dict: dict) -> tuple[float | None, float | None]:
+def _fetch_current_pinnacle(desk: DeskConfig, game_dict: dict) -> tuple[float | None, float | None]:
     """
     Fetch current Pinnacle vig-free probability for the traded team/side.
     Returns (current_prob, abs_movement_vs_snapshot) or (None, None) on failure.
+
+    Uses desk.sport_key exclusively — this is what fixes the pre-2026-07-04
+    bug where WNBA games silently used MLB's odds-api sport key (the old
+    module-level SPORT_KEYS dict only covered MLB/NBA).
     """
-    sport     = game_dict.get("sport", "MLB")
     home      = game_dict.get("home_team", "")
     away      = game_dict.get("away_team", "")
     side      = game_dict.get("side", "HOME")
     snap_prob = game_dict.get("pinnacle_prob") or game_dict.get("v_prob")
-    sport_key = SPORT_KEYS.get(sport.upper(), "baseball_mlb")
+    sport_key = desk.sport_key
 
     try:
         resp = requests.get(
@@ -337,6 +234,7 @@ def _truncate_content_blocks(content: list) -> list:
 # ── Message builder ────────────────────────────────────────────────────────────
 
 def _build_user_message(
+    desk: DeskConfig,
     game_dict: dict,
     current_pinnacle: float | None,
     pinnacle_movement: float | None,
@@ -348,12 +246,12 @@ def _build_user_message(
     away         = game_dict.get("away_team", "")
     date         = game_dict.get("date", "")
     game_time    = game_dict.get("game_time", "")
-    sport        = game_dict.get("sport", "MLB")
+    sport        = game_dict.get("sport", desk.sport_display_key)
     k_prob       = game_dict.get("kalshi_prob") or game_dict.get("k_prob", 0)
     v_prob       = game_dict.get("pinnacle_prob") or game_dict.get("v_prob", 0)
     gap          = game_dict.get("gap", 0)
     abs_gap      = abs(gap)
-    tier         = game_dict.get("tier") or _gap_tier(abs_gap)
+    tier         = game_dict.get("tier") or desk.gap_tier(abs_gap)
     signal       = game_dict.get("signal") or ("BUY_YES" if gap < 0 else "BUY_NO")
     hours_before = game_dict.get("hours_before_game")
 
@@ -381,7 +279,7 @@ def _build_user_message(
         )
 
     large_gap_note = ""
-    if abs_gap >= LARGE_GAP_WARN:
+    if abs_gap >= desk.get("thresholds.large_gap_warn", 0.20):
         large_gap_note = (
             f"\n\nWARNING — UNUSUALLY LARGE GAP ({abs_gap:.1%}): Behavioral bias rarely "
             f"produces gaps this wide. More likely causes: information event not yet reflected "
@@ -403,7 +301,14 @@ def _build_user_message(
             f"(now {current_pinnacle:.1%})."
         )
 
-    search_query = f"{home} {away} starting lineup injury scratch last 24 hours {date}"
+    search_query = desk.search_query_template.format(
+        home_team=home, away_team=away, date=date
+    )
+    search_context = desk.get(
+        "agent.prompt.search_context",
+        "Report what you find about injuries, lineup changes, or weather. "
+        "If nothing relevant is found, note that explicitly.",
+    )
 
     return (
         f"{edge_block}"
@@ -421,8 +326,7 @@ def _build_user_message(
         f"{large_gap_note}\n\n"
         f"Search for current news using this query:\n"
         f'  "{search_query}"\n\n'
-        f"Report what you find about starting pitchers, injuries, lineup changes, or weather. "
-        f"If nothing relevant is found, note that explicitly."
+        f"{search_context}"
     )
 
 
@@ -517,12 +421,12 @@ _COST_LOG_HEADER = [
 ]
 
 
-def _migrate_cost_log_header() -> None:
+def _migrate_cost_log_header(cost_log_path: str) -> None:
     """One-time migration: add 3 new columns to existing 7-column CSV rows."""
-    if not os.path.exists(COST_LOG):
+    if not os.path.exists(cost_log_path):
         return
     try:
-        with open(COST_LOG, newline="") as f:
+        with open(cost_log_path, newline="") as f:
             rows = list(csv.reader(f))
         if not rows or len(rows[0]) >= len(_COST_LOG_HEADER):
             return  # already migrated or empty
@@ -530,16 +434,14 @@ def _migrate_cost_log_header() -> None:
         for i in range(1, len(rows)):
             while len(rows[i]) < len(_COST_LOG_HEADER):
                 rows[i].append("")
-        with open(COST_LOG, "w", newline="") as f:
+        with open(cost_log_path, "w", newline="") as f:
             csv.writer(f).writerows(rows)
     except Exception:
         pass
 
 
-_migrate_cost_log_header()
-
-
 def _print_and_log_cost(
+    desk: DeskConfig,
     game_label: str,
     input_tokens: int,
     output_tokens: int,
@@ -549,11 +451,20 @@ def _print_and_log_cost(
     skip_reason: str | None = None,
     news_age: str = "",
 ) -> float:
-    """Print cost breakdown and append a row to agent_cost_log.csv."""
-    input_cost  = (input_tokens       / 1_000_000) * PRICE_INPUT
-    cache_cost  = (cache_read_tokens  / 1_000_000) * PRICE_CACHE_READ
-    output_cost = (output_tokens      / 1_000_000) * PRICE_OUTPUT
-    search_cost = search_calls * PRICE_PER_SEARCH
+    """Print cost breakdown and append a row to this desk's agent_cost_log.csv."""
+    cost_log = os.path.join(BASE, desk.agent_cost_log_path)
+    _migrate_cost_log_header(cost_log)
+
+    pricing      = desk.get("agent.pricing", {})
+    price_input  = pricing.get("input_per_million", 3.00)
+    price_cache  = pricing.get("cache_read_per_million", 0.30)
+    price_output = pricing.get("output_per_million", 15.00)
+    price_search = pricing.get("per_search", 0.01)
+
+    input_cost  = (input_tokens       / 1_000_000) * price_input
+    cache_cost  = (cache_read_tokens  / 1_000_000) * price_cache
+    output_cost = (output_tokens      / 1_000_000) * price_output
+    search_cost = search_calls * price_search
     total       = input_cost + cache_cost + output_cost + search_cost
 
     print(f"\n  [AGENT COST] {game_label}")
@@ -564,9 +475,9 @@ def _print_and_log_cost(
     print(f"  {'─'*40}")
     print(f"  Total this trade:           ${total:.4f}")
 
-    os.makedirs(os.path.dirname(COST_LOG), exist_ok=True)
-    write_header = not os.path.exists(COST_LOG)
-    with open(COST_LOG, "a", newline="") as f:
+    os.makedirs(os.path.dirname(cost_log), exist_ok=True)
+    write_header = not os.path.exists(cost_log)
+    with open(cost_log, "a", newline="") as f:
         w = csv.writer(f)
         if write_header:
             w.writerow(_COST_LOG_HEADER)
@@ -588,7 +499,7 @@ def _print_and_log_cost(
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
-def run(game_dict: dict, edge_context: dict | None = None) -> dict:
+def run(desk: DeskConfig, game_dict: dict, edge_context: dict | None = None) -> dict:
     """
     Evaluate a flagged trade. Returns a verdict dict.
     Never raises — defaults to MONITOR on any error.
@@ -605,17 +516,29 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
         return _default_verdict("ANTHROPIC_API_KEY not set in .env")
 
     ec = edge_context or _DEFAULT_EDGE_CONTEXT
+    model           = desk.get("agent.model", MODEL)
+    max_tokens      = desk.get("agent.max_tokens", 2048)
+    max_tokens_retry = desk.get("agent.max_tokens_retry", 1024)
+    pinnacle_movement_threshold = desk.get("thresholds.pinnacle_move_agent_prompt", 0.03)
+
+    cached_system = [
+        {
+            "type":          "text",
+            "text":          desk.agent_system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
     # Step 1: Pinnacle stability (fast check before burning API tokens)
-    current_pinnacle, pinnacle_movement = _fetch_current_pinnacle(game_dict)
+    current_pinnacle, pinnacle_movement = _fetch_current_pinnacle(desk, game_dict)
     pinnacle_stable = (
         True if pinnacle_movement is None
-        else pinnacle_movement < PINNACLE_MOVEMENT_THRESHOLD
+        else pinnacle_movement < pinnacle_movement_threshold
     )
 
     # Step 2: Build research prompt
     user_msg = _build_user_message(
-        game_dict, current_pinnacle, pinnacle_movement, pinnacle_stable, ec
+        desk, game_dict, current_pinnacle, pinnacle_movement, pinnacle_stable, ec
     )
 
     # Step 3: Call Claude with web_search + cached system prompt
@@ -632,11 +555,11 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
         f"{game_dict.get('away_team', '?')} @ {game_dict.get('home_team', '?')}"
     )
 
-    def _make_api_call(msgs: list, max_tok: int = 2048, force_tool: bool = False):
+    def _make_api_call(msgs: list, max_tok: int = max_tokens, force_tool: bool = False):
         kwargs: dict = dict(
-            model=MODEL,
+            model=model,
             max_tokens=max_tok,
-            system=_CACHED_SYSTEM,
+            system=cached_system,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=msgs,
             betas=["web-search-2025-03-05"],
@@ -681,7 +604,7 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
 
         # Turn 2: search results are now in context — ask for JSON verdict
         messages.append({"role": "assistant", "content": _truncate_content_blocks(response.content)})
-        messages.append({"role": "user", "content": _build_verdict_prompt(ec)})
+        messages.append({"role": "user", "content": _build_verdict_prompt(desk, ec)})
         response = _make_api_call(messages)
         _accumulate(response)
 
@@ -695,7 +618,7 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
                 "role":    "user",
                 "content": "Your response was not valid JSON. Return ONLY the JSON object, no other text.",
             })
-            retry = _make_api_call(messages, max_tok=1024)
+            retry = _make_api_call(messages, max_tok=max_tokens_retry)
             _accumulate(retry)
             retry_text = "".join(getattr(b, "text", "") for b in retry.content)
             verdict = _parse_verdict(retry_text)
@@ -724,7 +647,7 @@ def run(game_dict: dict, edge_context: dict | None = None) -> dict:
 
         # Log and print cost (with new verdict fields)
         _print_and_log_cost(
-            game_label, total_input, total_output, total_cache, total_searches,
+            desk, game_label, total_input, total_output, total_cache, total_searches,
             recommendation=verdict.get("recommendation", ""),
             skip_reason=verdict.get("skip_reason"),
             news_age=verdict.get("news_age_estimate", ""),

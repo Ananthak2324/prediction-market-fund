@@ -1,0 +1,71 @@
+desk_id: WNBA
+desk_name: WNBA Sports Desk
+icon: "🏀"
+desk_status: ACTIVE
+market:
+  series_ticker: KXWNBAGAME
+  sport_display_key: WNBA
+  market_type: two_way_moneyline
+odds_api:
+  sport_key: basketball_wnba
+risk:
+  sandbox_start_date: "2026-07-05"
+data_paths:
+  paper_trades: data/wnba/paper_trades.json
+  skipped_trades: data/wnba/skipped_trades.json
+  shadow_trades: data/wnba/shadow_trades.json
+  monitor_cache: data/wnba/monitor_cache.json
+  gap_curves_db: data/wnba/gap_curves.db
+  snapshots_dir: data/wnba/snapshots/
+  performance_summary: data/wnba/performance_summary.json
+  agent_cost_log: data/wnba/agent_cost_log.csv
+  funnel_log: data/wnba/funnel_log.json
+  tier_investigation: data/wnba/tier_investigation.csv
+teams:
+  alias_map:
+    "LV": Las Vegas Aces
+    "NY": New York Liberty
+    "CHI": Chicago Sky
+    "SEA": Seattle Storm
+    "LA": Los Angeles Sparks
+    "MIN": Minnesota Lynx
+    "CON": Connecticut Sun
+    "PHX": Phoenix Mercury
+    "ATL": Atlanta Dream
+    "IND": Indiana Fever
+    "DAL": Dallas Wings
+    "WAS": Washington Mystics
+agent:
+  prompt:
+    market_description: WNBA basketball game
+    disqualifiers:
+      - Starting player ruled out TODAY
+        announced in last 24 hours
+      - Key starter leading scorer or point guard
+        scratched TODAY
+    not_disqualifiers:
+      - Chronic injuries or season-long absences
+        already known for 48+ hours
+      - Load management for healthy veterans
+      - Historical injury mentions
+    behavioral_patterns:
+      - "HOME_PREMIUM: retail overprices home teams"
+      - "STAR_BIAS: popular players drive overpricing"
+      - "FAVORITE_LONGSHOT: retail underprices heavy favs"
+      - "LOW_ATTENTION: slower Kalshi price updates"
+    search_query_template: >
+      {home_team} {away_team} WNBA starting lineup
+      injury scratch last 24 hours {date}
+    search_context: >
+      Report starting lineups injuries or
+      lineup changes only
+  chronic_keywords:
+    - season-ending
+    - placed on injury report
+    - out for season
+  new_scratch_keywords:
+    - scratch
+    - ruled out
+    - questionable
+    - game-time decision
+    - late scratch

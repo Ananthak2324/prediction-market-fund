@@ -28,27 +28,24 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.utils import remove_vig
+from core.desk_loader import get_desk
 
+# This script is permanently scoped to MLB (its data paths are MLB-specific
+# static files) — there's no --sport/--desk selector to add. It reads its
+# alias map from desks/mlb.yaml (teams.alias_map), the same canonical source
+# used by every other consumer of the once-diverged KALSHI_ALIAS dicts.
 KALSHI_FILE = "data/raw/kalshi/mlb_markets.json"
 VEGAS_GLOB  = "data/raw/vegas/mlb/*.json"
 ALL_BOOKS   = ["pinnacle", "draftkings", "fanduel"]
 MIN_DATE    = "2026-05-13"
 
-KALSHI_ALIAS = {
-    "A's":           "Athletics",
-    "Chicago C":     "Cubs",
-    "Chicago WS":    "White Sox",
-    "Los Angeles A": "Angels",
-    "Los Angeles D": "Dodgers",
-    "New York M":    "Mets",
-    "New York Y":    "Yankees",
-}
+_MLB_DESK = get_desk("MLB")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def normalise(sub: str) -> str:
-    return KALSHI_ALIAS.get(sub, sub)
+    return _MLB_DESK.alias_map.get(sub, sub)
 
 
 def match_team(kalshi_sub: str, vegas_teams: list[str]) -> str | None:

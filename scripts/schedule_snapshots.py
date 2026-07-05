@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.utils import ticker_to_utc
+from core.desk_loader import get_active_desks
 
 KALSHI_BASE  = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 SNAPSHOT_DIR = "data/snapshots"
@@ -42,8 +43,6 @@ MISSED_LOG   = os.path.join(SNAPSHOT_DIR, "missed_snapshots.json")
 # 20-minute window centered at 2h before game: [start − 2h10m, start − 1h50m]
 WINDOW_MIN = 110   # minutes before game (window opens)
 WINDOW_MAX = 130   # minutes before game (window closes)
-
-SERIES = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME"}
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -154,9 +153,14 @@ def log_missed(game: dict, now: datetime) -> None:
 
 
 def run_snapshot() -> bool:
-    """Invoke snapshot_gaps.py and return True on success."""
+    """
+    Invoke snapshot_gaps.py across all active desks and return True on success.
+    Previously hardcoded to "--sport mlb" — meant WNBA games in this scheduler's
+    own window never actually triggered a snapshot (only the separate widescan
+    job covered them). --all-desks fixes that gap as a side effect.
+    """
     result = subprocess.run(
-        [sys.executable, "scripts/snapshot_gaps.py", "--sport", "mlb"],
+        [sys.executable, "scripts/snapshot_gaps.py", "--all-desks"],
         capture_output=True,
         text=True,
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -175,9 +179,9 @@ def main() -> None:
     log(f"Scheduler check — {now.strftime('%Y-%m-%d %H:%M UTC')}")
 
     all_games: list[dict] = []
-    for sport, ticker in SERIES.items():
-        games = fetch_games(ticker)
-        log(f"  {sport.upper()}: {len(games)} open games found")
+    for desk in get_active_desks():
+        games = fetch_games(desk.series_ticker)
+        log(f"  {desk.desk_id}: {len(games)} open games found")
         all_games.extend(games)
 
     if not all_games:

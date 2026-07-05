@@ -15,12 +15,17 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-V_PROB_MIN              = 0.20   # below this = implausible Pinnacle line (data error)
-V_PROB_MAX              = 0.80   # above this = implausible Pinnacle line (data error)
-PINNACLE_MOVE_THRESHOLD = 0.05   # 5% pre-filter hard gate (research agent re-checks at 3%)
+from core.desk_loader import DeskConfig
+
+# Fallback defaults if a desk config is missing a threshold — kept in sync with
+# desks/base.yaml's thresholds block.
+_V_PROB_MIN_DEFAULT              = 0.20
+_V_PROB_MAX_DEFAULT              = 0.80
+_PINNACLE_MOVE_THRESHOLD_DEFAULT = 0.05
 
 
 def pre_filter(
+    desk: DeskConfig,
     candidate: dict,
     existing_trades: list,
     snapshot_time: datetime | None = None,
@@ -29,6 +34,7 @@ def pre_filter(
     Run cheap Python checks before burning a research agent API call.
 
     Args:
+        desk:            DeskConfig — thresholds sourced from desks/<id>.yaml.
         candidate:       Edge discovery candidate dict (from compute_gap_matrix).
         existing_trades: Current contents of paper_trades.json.
         snapshot_time:   UTC datetime of this discovery run (defaults to now).
@@ -37,6 +43,10 @@ def pre_filter(
         {"action": "SKIP",    "reason": "PRE_FILTER_*: <detail>"}
         {"action": "PROCEED", "reason": "passes all pre-filter checks"}
     """
+    v_prob_min = desk.get("thresholds.v_prob_min", _V_PROB_MIN_DEFAULT)
+    v_prob_max = desk.get("thresholds.v_prob_max", _V_PROB_MAX_DEFAULT)
+    pinnacle_move_threshold = desk.get("thresholds.pinnacle_move_hard_gate", _PINNACLE_MOVE_THRESHOLD_DEFAULT)
+
     ticker  = candidate.get("kalshi_ticker", "")
     v_prob  = float(candidate.get("v_prob") or candidate.get("pinnacle_prob") or 0.0)
     start   = candidate.get("start_utc", "")
@@ -47,12 +57,12 @@ def pre_filter(
     # CHECK 1 — Data validity
     # Pinnacle never prices an MLB/WNBA team below 20% or above 80% in a regular-season
     # game. Values outside this range signal a data-matching error, not a real gap.
-    if v_prob < V_PROB_MIN or v_prob > V_PROB_MAX:
+    if v_prob < v_prob_min or v_prob > v_prob_max:
         return {
             "action": "SKIP",
             "reason": (
                 f"PRE_FILTER_DATA_ERROR: v_prob={v_prob:.3f} outside valid range "
-                f"{V_PROB_MIN}-{V_PROB_MAX} — likely data matching error"
+                f"{v_prob_min}-{v_prob_max} — likely data matching error"
             ),
         }
 
@@ -84,7 +94,7 @@ def pre_filter(
     v_prob_current = candidate.get("v_prob_current")
     if v_prob_current is not None:
         movement = abs(float(v_prob_current) - v_prob)
-        if movement >= PINNACLE_MOVE_THRESHOLD:
+        if movement >= pinnacle_move_threshold:
             return {
                 "action": "SKIP",
                 "reason": (

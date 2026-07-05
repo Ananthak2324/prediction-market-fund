@@ -31,6 +31,8 @@ from scipy.stats import binomtest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.desk_loader import get_desk
+
 BASE          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKIPPED_FILE  = os.path.join(BASE, "data", "skipped_trades.json")
 TRADES_FILE   = os.path.join(BASE, "data", "paper_trades.json")
@@ -44,11 +46,15 @@ CHRONIC_KEYWORDS = [
     "caitlin clark",  # WNBA example
 ]
 
-# Matches the actual system: agent/edge_discovery_agent.py TIER_B_GAP=0.10, TIER_C_GAP=0.15, MIN_GAP=0.05
+# Tier boundaries sourced from desk config (desks/base.yaml thresholds.tier_a/b/c)
+# instead of a third independent hardcoded copy — was previously its own
+# TIER_BOUNDS list, found during the 2026-07-04 audit to be a silent-drift risk
+# alongside edge_discovery_agent.py's and research_agent.py's own copies.
+_DESK = get_desk("MLB")  # MLB/WNBA currently share identical tier boundaries
 TIER_BOUNDS = [
-    ("tier_a", 0.05, 0.10),
-    ("tier_b", 0.10, 0.15),
-    ("tier_c", 0.15, float("inf")),
+    ("tier_a", _DESK.tier_a[0], _DESK.tier_b[0]),
+    ("tier_b", _DESK.tier_b[0], _DESK.tier_c[0]),
+    ("tier_c", _DESK.tier_c[0], float("inf")),
 ]
 
 

@@ -6,6 +6,6 @@ After=network-online.target
 Type=oneshot
 User=predfund
 WorkingDirectory=/opt/prediction-fund
-ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/snapshot_gaps.py --sport all
+ExecStart=/opt/prediction-fund/venv/bin/python3 scripts/snapshot_gaps.py --all-desks
 StandardOutput=append:/opt/prediction-fund/data/snapshots/widescan.log
 StandardError=append:/opt/prediction-fund/data/snapshots/widescan.log

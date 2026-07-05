@@ -72,5 +72,20 @@ _MAPS = {"nba": NBA_MAP, "nfl": NFL_MAP, "mlb": MLB_MAP}
 
 
 def normalize_team(name: str, sport: str) -> str:
+    """
+    Legacy path — kept for callers not yet migrated to desk config. Prefer
+    normalize_team_desk() below, which sources its abbreviation map from
+    desks/<id>.yaml (teams.abbreviation_map) instead of these hardcoded dicts.
+    """
     mapping = _MAPS.get(sport.lower(), {})
     return mapping.get(name, name)
+
+
+def get_alias_map(desk) -> dict:
+    """desk: core.desk_loader.DeskConfig. Returns the desk's abbreviation map."""
+    return desk.abbreviation_map
+
+
+def normalize_team_desk(name: str, desk) -> str:
+    """desk: core.desk_loader.DeskConfig."""
+    return desk.abbreviation_map.get(name, name)

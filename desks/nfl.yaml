@@ -1,0 +1,44 @@
+desk_id: NFL
+desk_name: NFL Sports Desk
+icon: "🏈"
+desk_status: PENDING
+market:
+  series_ticker: KXNFLGAME
+  sport_display_key: NFL
+  market_type: two_way_moneyline
+odds_api:
+  sport_key: americanfootball_nfl
+risk:
+  sandbox_start_date: "2026-09-05"
+  near_resolution_hours: 1.0
+data_paths:
+  paper_trades: data/nfl/paper_trades.json
+  skipped_trades: data/nfl/skipped_trades.json
+  shadow_trades: data/nfl/shadow_trades.json
+  monitor_cache: data/nfl/monitor_cache.json
+  gap_curves_db: data/nfl/gap_curves.db
+  snapshots_dir: data/nfl/snapshots/
+  performance_summary: data/nfl/performance_summary.json
+  agent_cost_log: data/nfl/agent_cost_log.csv
+  funnel_log: data/nfl/funnel_log.json
+  tier_investigation: data/nfl/tier_investigation.csv
+agent:
+  prompt:
+    market_description: NFL football game
+    disqualifiers:
+      - Starting QB ruled out TODAY
+      - Key offensive or defensive starter
+        ruled out TODAY
+      - Weather wind above 20mph or heavy rain
+        at game time
+    not_disqualifiers:
+      - Week-old injury designations on injury
+        report listed Wednesday for Sunday game
+        is not new information
+      - Injury history or career injury mentions
+    search_query_template: >
+      {home_team} {away_team} NFL injury report
+      starting lineup last 24 hours {date}
+    search_context: >
+      Report QB status key starter injuries
+      or weather conditions only

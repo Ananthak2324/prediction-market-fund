@@ -125,38 +125,99 @@ st.markdown("""
 # ─── data loaders ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=30)
 def load_trades() -> pd.DataFrame:
-    fp = _p("data", "paper_trades.json")
-    if not os.path.exists(fp):
-        return pd.DataFrame()
-    try:
-        with open(fp) as f:
-            data = json.load(f)
-        return pd.DataFrame(data) if data else pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
+    """
+    Aggregates paper_trades.json across every active desk (data/mlb/, data/wnba/,
+    ...). Falls back to the old shared data/paper_trades.json if no desk-scoped
+    files exist yet (pre-migration / local dev before Phase 2 desk rollout).
+    """
+    from core.desk_loader import get_active_desks
+    all_trades: list[dict] = []
+    found_any = False
+    for desk in get_active_desks():
+        fp = _p(desk.paper_trades_path)
+        if not os.path.exists(fp):
+            continue
+        found_any = True
+        try:
+            with open(fp) as f:
+                all_trades.extend(json.load(f))
+        except Exception:
+            pass
+    if not found_any:
+        fp = _p("data", "paper_trades.json")
+        if os.path.exists(fp):
+            try:
+                with open(fp) as f:
+                    all_trades = json.load(f)
+            except Exception:
+                pass
+    return pd.DataFrame(all_trades) if all_trades else pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
 def load_summary() -> dict:
-    fp = _p("data", "performance_summary.json")
-    if not os.path.exists(fp):
+    """
+    Merges performance_summary.json across active desks into one dict for the
+    dashboard's cross-desk views. Top-level counts are summed; win rates are
+    recomputed from the summed counts rather than averaged.
+    """
+    from core.desk_loader import get_active_desks
+    summaries = []
+    for desk in get_active_desks():
+        fp = _p(desk.performance_summary_path)
+        if os.path.exists(fp):
+            try:
+                with open(fp) as f:
+                    s = json.load(f)
+                if s:
+                    summaries.append(s)
+            except Exception:
+                pass
+
+    if not summaries:
+        fp = _p("data", "performance_summary.json")
+        if os.path.exists(fp):
+            try:
+                with open(fp) as f:
+                    return json.load(f)
+            except Exception:
+                return {}
         return {}
-    try:
-        with open(fp) as f:
-            return json.load(f)
-    except Exception:
-        return {}
+
+    if len(summaries) == 1:
+        return summaries[0]
+
+    # Merge: sum top-level counts, recompute win_rate_overall from the sums.
+    merged = dict(summaries[0])
+    for key in ("total_logged", "total_paused", "total_resolved", "total_valid",
+                "total_valid_wins", "total_excluded", "total_open"):
+        merged[key] = sum(s.get(key, 0) or 0 for s in summaries)
+    if merged.get("total_valid"):
+        merged["win_rate_overall"] = round(merged["total_valid_wins"] / merged["total_valid"], 4)
+    return merged
 
 
 @st.cache_data(ttl=30)
 def load_cost_log() -> pd.DataFrame:
+    """Aggregates agent_cost_log.csv across active desks."""
+    from core.desk_loader import get_active_desks
+    frames = []
+    for desk in get_active_desks():
+        fp = _p(desk.agent_cost_log_path)
+        if os.path.exists(fp):
+            try:
+                frames.append(pd.read_csv(fp))
+            except Exception:
+                pass
+    if frames:
+        return pd.concat(frames, ignore_index=True)
     fp = _p("data", "agent_cost_log.csv")
-    if not os.path.exists(fp):
-        return pd.DataFrame()
-    try:
-        return pd.read_csv(fp)
-    except Exception:
-        return pd.DataFrame()
+    if os.path.exists(fp):
+        try:
+            return pd.read_csv(fp)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
@@ -424,45 +485,57 @@ if "memory_agent" not in st.session_state:
     st.session_state.memory_agent = None
 
 # ─── TABS ─────────────────────────────────────────────────────────────────────
-tab_mlb, tab_wnba, tab_curves, tab_log, tab_perf, tab_sandbox, tab_sys, tab_intel = st.tabs([
-    "⚾ MLB", "🏀 WNBA", "📉 Gap Curves", "📋 Trade Log", "📈 Performance", "💰 Sandbox", "⚙️ System", "🧠 Intelligence"
-])
+from core.desk_loader import get_active_desks as _get_active_desks_for_tabs
+
+_active_desks = _get_active_desks_for_tabs()
+_desk_tab_labels  = [f"{d.icon} {d.desk_id}" for d in _active_desks]
+_fixed_tab_labels = ["📉 Gap Curves", "📋 Trade Log", "📈 Performance", "💰 Sandbox",
+                     "🔬 Investigation", "🧠 Intelligence", "⚙️ System"]
+
+_all_tabs = st.tabs(_desk_tab_labels + _fixed_tab_labels)
+_n_desks  = len(_active_desks)
+tab_curves, tab_log, tab_perf, tab_sandbox, tab_invest, tab_intel, tab_sys = _all_tabs[_n_desks:]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB — MLB LIVE GAP SCANNER
+# TAB — PER-DESK LIVE GAP SCANNER
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_mlb:
+
+def render_desk_tab(desk, all_rows: list[dict], latest_snap_label: str) -> None:
+    """
+    Live gap scanner for one desk. Replaces the formerly duplicated
+    with tab_mlb: / with tab_wnba: blocks — same layout, parameterized by
+    desk instead of hardcoded sport strings.
+    """
     now_utc       = datetime.now(timezone.utc)
     today_et_date = now_utc.astimezone(ET).date()
 
-    # ── Build gap records from all open markets in latest snapshots ───────────
-    # No date restriction — biggest gaps often appear when Kalshi markets open
-    # days before game time. Show all open markets sorted by gap size.
     records = []
     snapped_tickers: set[str] = set()
-    mlb_rows = [r for r in all_recent_rows if r.get("sport", "MLB") == "MLB"]
-    for row in mlb_rows:
+    desk_rows = [r for r in all_rows if r.get("sport") == desk.sport_display_key]
+
+    for row in desk_rows:
         gap     = row.get("gap", 0) or 0
         abs_gap = row.get("abs_gap", abs(gap))
         signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
-        tier    = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
+        tier    = desk.gap_tier(abs_gap)
 
         try:
             game_dt = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
             hours   = round((game_dt - now_utc).total_seconds() / 3600, 1)
         except Exception:
-            hours = None
+            game_dt = None
+            hours   = None
 
-        # Only show markets that haven't started yet — in-progress Kalshi prices
-        # diverge from pre-game lines and create spurious gap signals
-        if hours is not None and hours < 0:
+        # Only show markets that haven't started (or just started) — in-game
+        # Kalshi prices diverge from pre-game lines and create spurious gaps.
+        if hours is not None and hours < -4:
             continue
 
-        if game_dt.astimezone(ET).date() == today_et_date:
+        if game_dt is not None and game_dt.astimezone(ET).date() == today_et_date:
             snapped_tickers.add(row.get("event_ticker", ""))
 
-        if abs_gap >= 0.05 and tier in ("B", "C"):
+        if abs_gap >= desk.gap_min and tier in ("B", "C"):
             action = "TRADE ✓"
         elif abs_gap >= 0.03:
             action = "WATCH"
@@ -470,7 +543,7 @@ with tab_mlb:
             action = "—"
 
         try:
-            game_date_label = game_dt.astimezone(ET).strftime("%b %-d")
+            game_date_label = game_dt.astimezone(ET).strftime("%b %-d") if game_dt else "—"
         except Exception:
             game_date_label = "—"
 
@@ -489,12 +562,24 @@ with tab_mlb:
             "_abs_gap":      abs_gap,
         })
 
+    # ── Tier status cards ──────────────────────────────────────────────────────
+    tk = desk.tier_kelly
+    st.markdown(
+        f"<div style='font-size:11px;color:#6B7280;margin-bottom:8px'>"
+        f"Tier A: ACTIVE — full sizing ({tk.get('A',0.25):.0%}x Kelly) &nbsp;·&nbsp; "
+        f"Tier B: ACTIVE — reduced sizing ({tk.get('B',0.10):.0%}x Kelly), validation in progress &nbsp;·&nbsp; "
+        f"Tier C: SHADOW — EV -1.00, investigating &nbsp;·&nbsp; "
+        f"BUY_NO: SHADOW — 37.5% WR, investigating"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
     # ── Today's full schedule (games not yet snapped) ─────────────────────────
-    schedule = fetch_today_schedule()
+    schedule = fetch_today_schedule(desk.series_ticker)
     unsnapped = [g for g in schedule if g["event_ticker"] not in snapped_tickers]
 
     if unsnapped:
-        st.markdown("**Today's Schedule** — awaiting snapshot (fires ~2h before first pitch)")
+        st.markdown("**Today's Schedule** — awaiting snapshot (fires ~2h before game time)")
         sched_rows = []
         for g in unsnapped:
             hrs_away = round((g["start_et"].astimezone(timezone.utc) - now_utc).total_seconds() / 3600, 1)
@@ -530,106 +615,12 @@ with tab_mlb:
             unsafe_allow_html=True,
         )
     elif not unsnapped:
-        st.info("No open markets found in latest snapshots.")
+        st.info(f"No open {desk.desk_id} markets found in latest snapshots.")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB — WNBA LIVE GAP SCANNER
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_wnba:
-    now_utc_w       = datetime.now(timezone.utc)
-    today_et_date_w = now_utc_w.astimezone(ET).date()
-
-    wnba_rows = [r for r in all_recent_rows if r.get("sport") == "WNBA"]
-    records_w = []
-    snapped_tickers_w: set[str] = set()
-
-    for row in wnba_rows:
-        gap     = row.get("gap", 0) or 0
-        abs_gap = row.get("abs_gap", abs(gap))
-        signal  = "BUY_YES" if gap <= 0 else "BUY_NO"
-        tier    = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
-
-        try:
-            game_dt_w = datetime.fromisoformat(row["start_utc"].replace("Z", "+00:00"))
-            hours_w   = round((game_dt_w - now_utc_w).total_seconds() / 3600, 1)
-        except Exception:
-            game_dt_w = None
-            hours_w   = None
-
-        if hours_w is not None and hours_w < -4:
-            continue
-
-        if game_dt_w is not None and game_dt_w.astimezone(ET).date() == today_et_date_w:
-            snapped_tickers_w.add(row.get("event_ticker", ""))
-
-        if abs_gap >= 0.05 and tier in ("B", "C"):
-            action = "TRADE ✓"
-        elif abs_gap >= 0.03:
-            action = "WATCH"
-        else:
-            action = "—"
-
-        try:
-            game_date_label_w = game_dt_w.astimezone(ET).strftime("%b %-d") if game_dt_w else "—"
-        except Exception:
-            game_date_label_w = "—"
-
-        records_w.append({
-            "Game":     row.get("game", ""),
-            "Date":     game_date_label_w,
-            "Game Time": fmt_game_time(row.get("start_utc", "")),
-            "Kalshi":   fmt_pct(row.get("k_prob")),
-            "Pinnacle": fmt_pct(row.get("v_prob")),
-            "Gap":      f"{gap * 100:+.1f}%",
-            "Signal":   signal,
-            "Tier":     tier,
-            "Hours":    round(hours_w, 1) if hours_w is not None else "—",
-            "Action":   action,
-            "Snapped":  fmt_snap_time(row.get("_snap_time", "")),
-            "_abs_gap": abs_gap,
-        })
-
-    schedule_w = fetch_today_schedule("KXWNBAGAME")
-    unsnapped_w = [g for g in schedule_w if g["event_ticker"] not in snapped_tickers_w]
-
-    if unsnapped_w:
-        st.markdown("**Today's Schedule** — awaiting snapshot (fires ~2h before tip-off)")
-        sched_rows_w = []
-        for g in unsnapped_w:
-            hrs_away = round((g["start_et"].astimezone(timezone.utc) - now_utc_w).total_seconds() / 3600, 1)
-            sched_rows_w.append({
-                "Game":       g["label"],
-                "Start (CT)": g["start_et"].strftime("%-I:%M %p"),
-                "Hours Away": hrs_away,
-                "Status":     "Pending snapshot",
-            })
-        st.dataframe(pd.DataFrame(sched_rows_w), use_container_width=True, hide_index=True)
-        st.markdown("<div style='margin-top:10px'></div>", unsafe_allow_html=True)
-
-    if records_w:
-        st.markdown("**Open Market Gap Scanner** — Kalshi vs Pinnacle · all dates · sorted by gap")
-        df_snap_w = (
-            pd.DataFrame(records_w)
-            .sort_values("_abs_gap", ascending=False)
-            .drop(columns=["_abs_gap"])
-            .reset_index(drop=True)
-        )
-        st.dataframe(df_snap_w, use_container_width=True, hide_index=True)
-
-        n_games_w = len(records_w)
-        bc_ct_w   = sum(1 for r in records_w if r["Tier"] in ("B", "C"))
-        gap3_ct_w = sum(1 for r in records_w if r["Action"] in ("TRADE ✓", "WATCH"))
-        st.markdown(
-            f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
-            f"{n_games_w} sides tracked &nbsp;·&nbsp; {bc_ct_w} Tier B/C signals &nbsp;·&nbsp; "
-            f"{gap3_ct_w} show |gap| ≥ 3% &nbsp;·&nbsp; "
-            f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    elif not unsnapped_w:
-        st.info("No open WNBA markets found in latest snapshots.")
+for _i, _desk in enumerate(_active_desks):
+    with _all_tabs[_i]:
+        render_desk_tab(_desk, all_recent_rows, latest_snap_label)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -638,7 +629,7 @@ with tab_wnba:
 with tab_curves:
     gc_ctrl1, gc_ctrl2, _ = st.columns([2, 2, 6])
     with gc_ctrl1:
-        gc_sport = st.selectbox("Sport", ["All", "MLB", "WNBA"], key="gc_sport")
+        gc_sport = st.selectbox("Sport", ["All"] + [d.sport_display_key for d in _active_desks], key="gc_sport")
     with gc_ctrl2:
         gc_window_label = st.selectbox("Window", ["Last 24h", "Last 48h", "Last 7 days"], key="gc_window")
 
@@ -1128,6 +1119,10 @@ with tab_sandbox:
     if not sb_config:
         st.info("Sandbox not initialized yet. Run `python scripts/backfill_sandbox.py` to set up.")
     else:
+        st.caption(
+            "Clean sandbox began 2026-07-05. Prior data archived "
+            "(pre-rebuild contamination — see reports/strategy_analysis_report.md)."
+        )
         bankroll_start   = sb_config.get("bankroll_start", 1000.0)
         total_pnl        = sum(t.get("pnl_dollars") or 0 for t in sb_closed)
         total_bankroll   = bankroll_start + total_pnl
@@ -1410,6 +1405,102 @@ with tab_sandbox:
                 "Total P&L":  f"${tot_pnl:+.2f}",
             })
         st.dataframe(pd.DataFrame(exit_rows), use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB — INVESTIGATION (Tier B validation, Tier C / BUY_NO shadow tracking)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_invest:
+    st.caption(
+        "Tracks the empirical signal gates added in the 2026-07-04 rebuild — "
+        "Tier B runs at reduced sizing pending validation; Tier C and BUY_NO "
+        "are shadow-only (never traded) pending investigation."
+    )
+
+    _invest_summary = load_summary()
+    _tier_perf   = _invest_summary.get("tier_performance", {})
+    _signal_perf = _invest_summary.get("signal_performance", {})
+
+    st.markdown("### Tier Validation")
+    ic1, ic2, ic3 = st.columns(3)
+
+    with ic1:
+        a = _tier_perf.get("A", {})
+        wr = a.get("win_rate")
+        st.markdown(f"""
+        <div class="mcard">
+          <div class="mlabel">Tier A — {a.get('status','ACTIVE_FULL')}</div>
+          <div class="mval"><span class="teal">{fmt_pct(wr)}</span></div>
+          <div class="msub">{a.get('resolved',0)} resolved &nbsp;·&nbsp; kelly={a.get('kelly_multiplier',0.25):.0%} &nbsp;·&nbsp; {a.get('upgrade_threshold','already active')}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with ic2:
+        b = _tier_perf.get("B", {})
+        wr = b.get("win_rate")
+        n_resolved = b.get("resolved", 0)
+        st.markdown(f"""
+        <div class="mcard">
+          <div class="mlabel">Tier B — {b.get('status','ACTIVE_REDUCED')}</div>
+          <div class="mval"><span class="yellow">{fmt_pct(wr)}</span></div>
+          <div class="msub">{n_resolved}/20 resolved &nbsp;·&nbsp; kelly={b.get('kelly_multiplier',0.10):.0%}</div>
+          <div class="msub">↑&gt;55%: {b.get('upgrade_threshold','—')}</div>
+          <div class="msub">↓&lt;45%: {b.get('downgrade_threshold','—')}</div>
+        </div>""", unsafe_allow_html=True)
+
+    with ic3:
+        c = _tier_perf.get("C", {})
+        swr = c.get("shadow_win_rate")
+        st.markdown(f"""
+        <div class="mcard">
+          <div class="mlabel">Tier C — {c.get('status','SHADOW_ONLY')}</div>
+          <div class="mval"><span class="red">{fmt_pct(swr)}</span></div>
+          <div class="msub">{c.get('shadow_resolved',0)} shadow resolved &nbsp;·&nbsp; {c.get('note','EV -1.00 confirmed')}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    st.markdown("### Signal Validation")
+    sc1, sc2 = st.columns(2)
+
+    with sc1:
+        by = _signal_perf.get("BUY_YES", {})
+        st.markdown(f"""
+        <div class="mcard">
+          <div class="mlabel">BUY_YES — {by.get('status','ACTIVE')}</div>
+          <div class="mval"><span class="teal">{fmt_pct(by.get('win_rate'))}</span></div>
+          <div class="msub">{by.get('resolved',0)} resolved</div>
+        </div>""", unsafe_allow_html=True)
+
+    with sc2:
+        bn = _signal_perf.get("BUY_NO", {})
+        st.markdown(f"""
+        <div class="mcard">
+          <div class="mlabel">BUY_NO — {bn.get('status','SHADOW_ONLY')}</div>
+          <div class="mval"><span class="red">{fmt_pct(bn.get('shadow_win_rate'))}</span></div>
+          <div class="msub">{bn.get('shadow_resolved',0)} shadow resolved &nbsp;·&nbsp; {bn.get('note','suspended pending investigation')}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    st.markdown("### Shadow Trades Log (per desk)")
+    for _desk in _active_desks:
+        _shadow_fp = _p(_desk.shadow_trades_path)
+        _shadow_list = []
+        if os.path.exists(_shadow_fp):
+            try:
+                with open(_shadow_fp) as f:
+                    _shadow_list = json.load(f)
+            except Exception:
+                pass
+        st.markdown(f"**{_desk.desk_id}** — {len(_shadow_list)} shadow trade(s)")
+        if _shadow_list:
+            _shadow_rows = [{
+                "Game":      s.get("game", ""),
+                "Signal":    s.get("signal", ""),
+                "Tier":      s.get("tier", ""),
+                "Gap":       fmt_pct(s.get("abs_gap")),
+                "Reason":    (s.get("shadow_reason") or "")[:80],
+                "Shadow Outcome": s.get("shadow_outcome") or "pending",
+            } for s in _shadow_list[-30:]]
+            st.dataframe(pd.DataFrame(_shadow_rows), use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -14,32 +14,43 @@ import sqlite3
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_trades.db")
 
 
-def calculate_position(bankroll: float, kalshi_price: float, pinnacle_prob: float) -> dict:
+def calculate_position(
+    bankroll: float,
+    kalshi_price: float,
+    pinnacle_prob: float,
+    kelly_multiplier: float = 0.25,
+) -> dict:
     """
-    Quarter-Kelly sizing capped at 10% of bankroll per position.
+    Kelly-fraction sizing capped at 10% of bankroll per position.
 
     Args:
-        bankroll:      current total bankroll in dollars
-        kalshi_price:  contract entry price (0-1, the side we're buying)
-        pinnacle_prob: Pinnacle vig-free probability that our bet wins
+        bankroll:         current total bankroll in dollars
+        kalshi_price:     contract entry price (0-1, the side we're buying)
+        pinnacle_prob:    Pinnacle vig-free probability that our bet wins
+        kelly_multiplier: fraction of full Kelly to size at — 0.25 (Tier A,
+                          the historical "quarter Kelly" default) or 0.10
+                          (Tier B, reduced sizing during validation — see
+                          apply_signal_gates() in edge_discovery_agent.py)
 
-    Returns dict with: full_kelly, quarter_kelly, position_fraction,
-                       position_dollars, shares, actual_cost
+    Returns dict with: full_kelly, sized_kelly, kelly_multiplier,
+                       position_fraction, position_dollars, shares, actual_cost
     """
     payout_ratio      = (1.0 - kalshi_price) / kalshi_price
     p                 = pinnacle_prob
     q                 = 1.0 - p
     full_kelly        = (p * payout_ratio - q) / payout_ratio
     full_kelly        = max(0.0, full_kelly)
-    quarter_kelly     = full_kelly * 0.25
-    position_fraction = min(quarter_kelly, 0.10)
+    sized_kelly       = full_kelly * kelly_multiplier
+    position_fraction = min(sized_kelly, 0.10)
     position_dollars  = bankroll * position_fraction
     shares            = int(position_dollars / kalshi_price)
     actual_cost       = shares * kalshi_price
 
     return {
         "full_kelly":        round(full_kelly, 4),
-        "quarter_kelly":     round(quarter_kelly, 4),
+        "quarter_kelly":     round(sized_kelly, 4),  # kept for backward-compat callers/DB column name
+        "sized_kelly":       round(sized_kelly, 4),
+        "kelly_multiplier":  kelly_multiplier,
         "position_fraction": round(position_fraction, 4),
         "position_dollars":  round(position_dollars, 2),
         "shares":            shares,

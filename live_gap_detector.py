@@ -27,34 +27,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.utils import remove_vig
+from core.desk_loader import get_desk, get_active_desks
 
 KALSHI_BASE = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 ODDS_BASE   = os.getenv("ODDS_API_BASE",   "https://api.theoddsapi.com")
 ODDS_KEY    = os.getenv("ODDS_API_KEY",    "")
 
-SERIES = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME"}
-SPORT_KEYS = {"mlb": "baseball_mlb", "nba": "basketball_nba"}
 BOOK_PRIORITY = ["pinnacle"]
-
-# Kalshi yes_sub_title values that don't directly substring-match the Vegas name
-KALSHI_ALIAS = {
-    "A's":          "Athletics",
-    "Chicago C":    "Cubs",
-    "Chicago WS":   "White Sox",
-    "Los Angeles A": "Angels",
-    "Los Angeles D": "Dodgers",
-    "New York M":   "Mets",
-    "New York Y":   "Yankees",
-    # NBA
-    "LA":           "Lakers",
-    "LA C":         "Clippers",
-    "GS":           "Warriors",
-    "NY":           "Knicks",
-    "NO":           "Pelicans",
-    "OKC":          "Thunder",
-    "SA":           "Spurs",
-    "NJ":           "Nets",
-}
 
 
 # ── Kalshi ────────────────────────────────────────────────────────────────────
@@ -118,14 +97,14 @@ def best_book_outcomes(game: dict) -> tuple[str, dict] | tuple[None, None]:
 
 # ── Matching ──────────────────────────────────────────────────────────────────
 
-def normalise(kalshi_sub: str) -> str:
+def normalise(kalshi_sub: str, alias_map: dict) -> str:
     """Map a Kalshi yes_sub_title to the keyword we'll search in Vegas team names."""
-    return KALSHI_ALIAS.get(kalshi_sub, kalshi_sub)
+    return alias_map.get(kalshi_sub, kalshi_sub)
 
 
-def match_to_vegas(kalshi_sub: str, vegas_teams: list[str]) -> str | None:
+def match_to_vegas(kalshi_sub: str, vegas_teams: list[str], alias_map: dict) -> str | None:
     """Return the Vegas team name that best matches a Kalshi sub_title."""
-    keyword = normalise(kalshi_sub).lower()
+    keyword = normalise(kalshi_sub, alias_map).lower()
     for team in vegas_teams:
         if keyword in team.lower():
             return team
@@ -134,9 +113,11 @@ def match_to_vegas(kalshi_sub: str, vegas_teams: list[str]) -> str | None:
 
 # ── Core logic ────────────────────────────────────────────────────────────────
 
-def build_gaps(sport: str) -> list[dict]:
-    series   = SERIES[sport]
-    sport_key = SPORT_KEYS[sport]
+def build_gaps(desk) -> list[dict]:
+    """desk: core.desk_loader.DeskConfig."""
+    series    = desk.series_ticker
+    sport_key = desk.sport_key
+    alias_map = desk.alias_map
 
     # 1. Live Kalshi
     raw = fetch_kalshi_open(series)
@@ -173,7 +154,7 @@ def build_gaps(sport: str) -> list[dict]:
             both_v = [home_v, away_v]
             mapping = {}
             for ks in kalshi_names:
-                m = match_to_vegas(ks, both_v)
+                m = match_to_vegas(ks, both_v, alias_map)
                 if m:
                     mapping[ks] = m
             if len(mapping) == 2 and len(set(mapping.values())) == 2:
@@ -208,7 +189,7 @@ def build_gaps(sport: str) -> list[dict]:
             start = s.get("occurrence_datetime", "")[:16].replace("T", " ") + "Z"
 
             gaps.append({
-                "sport":       sport.upper(),
+                "sport":       desk.sport_display_key,
                 "game":        game_label,
                 "team":        vs_name,
                 "side":        "HOME" if is_home else "AWAY",
@@ -246,10 +227,13 @@ def print_table(rows: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sport", choices=["mlb", "nba", "both"], default="both")
+    parser.add_argument("--desk", default=None,
+                        help="Desk to scan (e.g. MLB, WNBA). See desks/*.yaml.")
+    parser.add_argument("--all-desks", action="store_true",
+                        help="Scan all ACTIVE desks. Default when --desk is omitted.")
     args = parser.parse_args()
 
-    sports = ["mlb", "nba"] if args.sport == "both" else [args.sport]
+    desks = [get_desk(args.desk)] if args.desk and not args.all_desks else get_active_desks()
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n{'═'*110}")
@@ -258,10 +242,12 @@ def main() -> None:
 
     all_gaps: list[dict] = []
 
-    for sport in sports:
-        print(f"Fetching {sport.upper()}...", end="  ", flush=True)
+    for desk in desks:
+        if not desk.is_active:
+            continue
+        print(f"Fetching {desk.desk_id}...", end="  ", flush=True)
         try:
-            gaps = build_gaps(sport)
+            gaps = build_gaps(desk)
             print(f"{len(gaps)} team-sides matched")
             all_gaps.extend(gaps)
         except Exception as e:

@@ -5,6 +5,6 @@ Description=Prediction Fund — edge discovery agent (triggered by prediction-fu
 Type=oneshot
 User=predfund
 WorkingDirectory=/opt/prediction-fund
-ExecStart=/opt/prediction-fund/venv/bin/python3 agent/edge_discovery_agent.py --all-sports --upcoming --save
+ExecStart=/opt/prediction-fund/venv/bin/python3 agent/edge_discovery_agent.py --all-desks --upcoming --save
 StandardOutput=append:/opt/prediction-fund/data/snapshots/edge_discovery_out.log
 StandardError=append:/opt/prediction-fund/data/snapshots/edge_discovery_err.log

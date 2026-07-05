@@ -37,13 +37,17 @@ load_dotenv()
 from core.utils import ticker_to_utc
 from core.notifications import send_imessage
 
+# NOTE: _agent_run/_AGENT_AVAILABLE are only used inside _ingest_new_trades_impl(),
+# preserved for audit but never called (trade origination is now exclusively
+# agent/edge_discovery_agent.py — see Bug Fix 1 of the 2026-07-04 rebuild).
 try:
-    from agent.research_agent import run as _agent_run, TIER_B_MIN_GAP, TIER_C_MIN_GAP
+    from agent.research_agent import run as _agent_run
     _AGENT_AVAILABLE = True
 except Exception:
     _AGENT_AVAILABLE = False
-    TIER_B_MIN_GAP = 0.10
-    TIER_C_MIN_GAP = 0.15
+
+TIER_B_MIN_GAP = 0.10
+TIER_C_MIN_GAP = 0.15
 
 
 def _gap_tier(abs_gap: float) -> str:
@@ -59,6 +63,7 @@ SNAPSHOT_DIR   = "data/snapshots"
 TRADES_FILE    = "data/paper_trades.json"
 SUMMARY_FILE   = "data/performance_summary.json"
 SKIPPED_FILE   = "data/skipped_trades.json"
+SHADOW_FILE    = "data/shadow_trades.json"
 MONITOR_CACHE  = "data/monitor_cache.json"
 MONITOR_COOLDOWN_HOURS = 3.0
 RESOLVE_AFTER  = 0.5   # hours after game start before we attempt resolution (Kalshi handles finalization)
@@ -179,7 +184,23 @@ def _append_skipped(trade: dict, verdict: dict) -> None:
         json.dump(existing, f, indent=2)
 
 
+# DISABLED: trade origination consolidated to edge_discovery_agent.py — 2026-07-04 rebuild
 def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
+    """
+    DISABLED 2026-07-04: Trade origination consolidated to edge_discovery_agent.py
+    exclusively. update_outcomes.py resolves and updates only. Never originates.
+
+    The original implementation is preserved as _ingest_new_trades_impl() below for
+    audit purposes — it is no longer called from anywhere in this file.
+    """
+    print(
+        "[DISABLED] ingest_new_trades() called but is DISABLED. "
+        "All trade origination must go through edge_discovery_agent.py. Skipping."
+    )
+    return existing, 0, 0, 0
+
+
+def _ingest_new_trades_impl(existing: list[dict]) -> tuple[list[dict], int, int, int]:
     """
     Scan all snapshot files chronologically. For each game (event_ticker):
       - Log BUY_YES rows (Kalshi underprices) AND BUY_NO rows (Kalshi overprices)
@@ -187,6 +208,8 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
       - If a cleaner snapshot (≤3h) arrives for an already-logged suspect trade,
         replace the prices/timing while preserving any resolved outcome
     Returns (updated_list, new_count, replaced_count).
+
+    PRESERVED FOR AUDIT ONLY — not called. See ingest_new_trades() above.
     """
     # Index by event_ticker for O(1) replacement lookups
     event_index: dict[str, int] = {t["event_ticker"]: i for i, t in enumerate(existing)}
@@ -394,8 +417,23 @@ def ingest_new_trades(existing: list[dict]) -> tuple[list[dict], int, int, int]:
                         print(f"  [AGENT re-eval ERROR] {trade['game']}: {_agent_err} — keeping old verdict")
                         verdict = None
                     if verdict:
-                        trade.update(_agent_fields(verdict))
-                        print(f"  [AGENT re-eval] {trade['game']} → {verdict.get('recommendation','?')}")
+                        new_rec = verdict.get("recommendation")
+                        if new_rec == "TRADE":
+                            trade.update(_agent_fields(verdict))
+                            print(f"  [AGENT re-eval] {trade['game']} → TRADE")
+                        elif new_rec in ("MONITOR", "SKIP"):
+                            trade["status"] = "PAUSED"
+                            trade["paused_reason"] = (
+                                f"Re-evaluation downgraded to {new_rec} on "
+                                f"{datetime.now(timezone.utc).isoformat()}"
+                            )
+                            trade["agent_verdict"] = new_rec
+                            trade["agent_reasoning"] = verdict.get("reasoning")
+                            print(f"  [AGENT re-eval] {trade['game']} downgraded to {new_rec} "
+                                  f"— status=PAUSED, excluded from win rate")
+                        else:
+                            print(f"  [AGENT re-eval ERROR] {trade['game']} — unrecognised verdict "
+                                  f"{new_rec!r}, preserving original")
 
                 existing[event_index[event_ticker]] = trade
                 replaced_count += 1
@@ -516,28 +554,31 @@ def resolve_trades(trades: list[dict], dry_run: bool = False) -> tuple[int, int]
             trade["correct"]           = won
             trade["resolution_price"]  = 1.00 if won else 0.00
             trade["resolved_at"]       = kalshi["settlement_ts"]
+            if trade.get("status") != "PAUSED":
+                trade["status"] = "CLOSED"
 
         resolved += 1
 
     return resolved, still_open
 
 
-def resolve_skipped_trades() -> int:
+def _resolve_shadow_outcomes_in_file(path: str, label: str) -> int:
     """
-    For each skipped trade that has kalshi_ticker and no shadow_outcome yet,
+    For each entry in a shadow-tracking file (skipped_trades.json or
+    shadow_trades.json) that has a kalshi_ticker and no shadow_outcome yet,
     fetch the Kalshi result and record what would have happened.
     Returns count of shadow outcomes written.
     """
-    if not os.path.exists(SKIPPED_FILE):
+    if not os.path.exists(path):
         return 0
     try:
-        with open(SKIPPED_FILE) as f:
-            skipped = json.load(f)
+        with open(path) as f:
+            entries = json.load(f)
     except (json.JSONDecodeError, ValueError):
         return 0
 
     resolved = 0
-    for entry in skipped:
+    for entry in entries:
         if entry.get("shadow_outcome"):
             continue
         ticker = entry.get("kalshi_ticker", "")
@@ -568,11 +609,21 @@ def resolve_skipped_trades() -> int:
         resolved += 1
 
     if resolved:
-        with open(SKIPPED_FILE, "w") as f:
-            json.dump(skipped, f, indent=2)
-        print(f"  [SHADOW] Resolved {resolved} skipped trade(s) — shadow outcomes written.")
+        with open(path, "w") as f:
+            json.dump(entries, f, indent=2)
+        print(f"  [SHADOW] Resolved {resolved} {label} — shadow outcomes written.")
 
     return resolved
+
+
+def resolve_skipped_trades() -> int:
+    """Shadow-resolve skipped_trades.json entries. Returns count resolved."""
+    return _resolve_shadow_outcomes_in_file(SKIPPED_FILE, "skipped trade(s)")
+
+
+def resolve_shadow_trades() -> int:
+    """Shadow-resolve shadow_trades.json entries (Tier C / BUY_NO gated trades)."""
+    return _resolve_shadow_outcomes_in_file(SHADOW_FILE, "shadow trade(s)")
 
 
 # ── performance summary ───────────────────────────────────────────────────────
@@ -743,8 +794,13 @@ def gap_bucket(abs_gap: float) -> str:
 
 
 def build_summary(trades: list[dict]) -> dict:
-    resolved     = [t for t in trades if t.get("outcome") is not None]
-    open_        = [t for t in trades if t.get("outcome") is None]
+    # PAUSED trades (MONITOR-relabeling bug contamination — see Bug Fix 2) are excluded
+    # from every performance calculation below but remain visible in the raw Trade Log.
+    total_paused = sum(1 for t in trades if t.get("status") == "PAUSED")
+    active_trades = [t for t in trades if t.get("status") != "PAUSED"]
+
+    resolved     = [t for t in active_trades if t.get("outcome") is not None]
+    open_        = [t for t in active_trades if t.get("outcome") is None]
     wins         = [t for t in resolved if t["outcome"] == "WIN"]
 
     # Primary: only trades where the clean 2h signal agreed with original signal
@@ -816,13 +872,109 @@ def build_summary(trades: list[dict]) -> dict:
             "p_value":  pv,
         }
 
-    clean_trades   = [t for t in trades if not t.get("timing_suspect", False)
+    clean_trades   = [t for t in active_trades if not t.get("timing_suspect", False)
                       and t.get("valid_for_analysis", True)]
-    suspect_trades = [t for t in trades if t.get("timing_suspect", False)]
+    suspect_trades = [t for t in active_trades if t.get("timing_suspect", False)]
+
+    # ── tier_performance / signal_performance / drawdown_status ──────────────
+    # (2026-07-04 rebuild — Phase 1 Bug Fix 7)
+    def _ev(subset: list[dict]) -> float | None:
+        vals = []
+        for t in subset:
+            k = t.get("k_prob")
+            if k is None or k <= 0 or k >= 1:
+                continue
+            wr = 1.0 if t["outcome"] == "WIN" else 0.0
+            vals.append(wr * (1 - k) / k - (1 - wr))
+        return round(sum(vals) / len(vals), 4) if vals else None
+
+    def _shadow_bucket(entries: list[dict]) -> dict:
+        res = [e for e in entries if e.get("shadow_outcome") in ("WIN", "LOSS")]
+        w   = sum(1 for e in res if e["shadow_outcome"] == "WIN")
+        return {
+            "shadow_resolved":  len(res),
+            "shadow_wins":      w,
+            "shadow_win_rate":  round(w / len(res), 4) if res else None,
+        }
+
+    shadow_entries: list[dict] = []
+    if os.path.exists(SHADOW_FILE):
+        try:
+            with open(SHADOW_FILE) as f:
+                shadow_entries = json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    tier_performance = {
+        "A": {
+            "status": "ACTIVE_FULL",
+            "kelly_multiplier": 0.25,
+            "resolved": len(tier_a),
+            "wins": sum(1 for t in tier_a if t["outcome"] == "WIN"),
+            "win_rate": round(wr_ta, 4) if wr_ta is not None else None,
+            "p_value": round(binomtest(sum(1 for t in tier_a if t["outcome"] == "WIN"), len(tier_a), 0.5, alternative="greater").pvalue, 4) if len(tier_a) >= 5 else None,
+            "ev_per_dollar": _ev(tier_a),
+            "upgrade_threshold": "already active",
+        },
+        "B": {
+            "status": "ACTIVE_REDUCED",
+            "kelly_multiplier": 0.10,
+            "resolved": len(tier_b),
+            "wins": sum(1 for t in tier_b if t["outcome"] == "WIN"),
+            "win_rate": round(wr_tb, 4) if wr_tb is not None else None,
+            "p_value": round(binomtest(sum(1 for t in tier_b if t["outcome"] == "WIN"), len(tier_b), 0.5, alternative="greater").pvalue, 4) if len(tier_b) >= 5 else None,
+            "ev_per_dollar": _ev(tier_b),
+            "upgrade_threshold": "20 resolved trades with win rate > 55% upgrades to full sizing",
+            "downgrade_threshold": "20 resolved trades with win rate < 45% moves to shadow only",
+        },
+        "C": {
+            "status": "SHADOW_ONLY",
+            "kelly_multiplier": 0.00,
+            **_shadow_bucket([e for e in shadow_entries if e.get("tier") == "C"]),
+            "note": "EV -1.00 confirmed — investigating",
+        },
+    }
+
+    buy_yes_resolved = [t for t in resolved if t.get("signal") == "BUY_YES"]
+    signal_performance = {
+        "BUY_YES": {
+            "status": "ACTIVE",
+            "resolved": len(buy_yes_resolved),
+            "win_rate": round(sum(1 for t in buy_yes_resolved if t["outcome"] == "WIN") / len(buy_yes_resolved), 4) if buy_yes_resolved else None,
+        },
+        "BUY_NO": {
+            "status": "SHADOW_ONLY",
+            **_shadow_bucket([e for e in shadow_entries if e.get("signal") == "BUY_NO"]),
+            "note": "37.5% WR — suspended pending investigation",
+        },
+    }
+
+    drawdown_status = {"current_drawdown_pct": None, "circuit_breaker_active": False,
+                        "max_concurrent_positions": None, "concurrent_open_now": None}
+    try:
+        import sqlite3 as _sqlite3_dd
+        from execution.position_manager import (
+            count_open_positions as _count_open, _current_drawdown as _dd,
+            MAX_CONCURRENT_POSITIONS as _max_conc, MAX_DRAWDOWN_PAUSE as _max_dd,
+        )
+        _conn = _sqlite3_dd.connect(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_trades.db"
+        ))
+        _cur_dd = _dd(_conn)
+        drawdown_status = {
+            "current_drawdown_pct": round(_cur_dd, 4),
+            "circuit_breaker_active": _cur_dd >= _max_dd,
+            "max_concurrent_positions": _max_conc,
+            "concurrent_open_now": _count_open(_conn),
+        }
+        _conn.close()
+    except Exception:
+        pass
 
     return {
         # ── top-level counts ──────────────────────────────────────────────
         "total_logged":        len(trades),
+        "total_paused":        total_paused,
         "total_resolved":      len(resolved),
         "total_valid":         len(valid),
         "total_valid_wins":    len(valid_wins),
@@ -833,6 +985,11 @@ def build_summary(trades: list[dict]) -> dict:
         "primary_metric":      "clean_trades",
         "clean_trades":        _bucket(clean_trades),
         "suspect_trades":      _bucket(suspect_trades),
+
+        # ── 2026-07-04 rebuild: tier/signal validation tracking ───────────
+        "tier_performance":    tier_performance,
+        "signal_performance":  signal_performance,
+        "drawdown_status":     drawdown_status,
 
         # ── breakdown (primary / valid trades only) ───────────────────────
         "win_rate_overall":    round(win_rate, 4) if win_rate is not None else None,
@@ -858,8 +1015,8 @@ def build_summary(trades: list[dict]) -> dict:
             for t in excluded
         ],
         "last_updated":        datetime.now(timezone.utc).isoformat(),
-        "agent_stats":         _build_agent_stats(trades),
-        "portfolio_metrics":   _build_portfolio_metrics(trades),
+        "agent_stats":         _build_agent_stats(active_trades),
+        "portfolio_metrics":   _build_portfolio_metrics(active_trades),
     }
 
 
@@ -1013,14 +1170,25 @@ def print_summary(trades: list[dict], summary: dict) -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run",   action="store_true", help="Resolve but don't write files")
-    parser.add_argument("--force-all", action="store_true", help="Re-resolve all trades including already-resolved")
-    parser.add_argument("--no-ingest", action="store_true",
-                         help="Skip ingesting new trades from snapshots — resolve/settle existing trades only. "
-                              "Used to halt new trade generation while letting open positions run to resolution.")
-    args = parser.parse_args()
+def _run_for_desk(desk, args) -> None:
+    """
+    Run the full resolve/settle/summarize pipeline for one desk, by pointing
+    the module-level file-path globals at that desk's data_paths for the
+    duration of this call. Every function below (load_trades, save_trades,
+    resolve_skipped_trades, resolve_shadow_trades, save_summary, ...) reads
+    these globals directly rather than taking a path parameter — reassigning
+    them per-desk avoids threading a `desk` argument through the whole file.
+    """
+    global TRADES_FILE, SUMMARY_FILE, SKIPPED_FILE, SHADOW_FILE
+
+    # Relative paths, matching this script's existing convention — it always
+    # runs with CWD at the repo root (systemd WorkingDirectory=/opt/prediction-fund).
+    TRADES_FILE  = desk.paper_trades_path
+    SUMMARY_FILE = desk.performance_summary_path
+    SKIPPED_FILE = desk.skipped_trades_path
+    SHADOW_FILE  = desk.shadow_trades_path
+
+    print(f"\n{'='*70}\n  DESK: {desk.desk_id}\n{'='*70}")
 
     if args.force_all:
         for t in (trades := load_trades()):
@@ -1028,7 +1196,7 @@ def main() -> None:
     else:
         trades = load_trades()
 
-    # 1. Ingest new trades from snapshots (agent gates every new trade)
+    # 1. Ingest new trades from snapshots (DISABLED — see ingest_new_trades())
     if args.no_ingest:
         print("[--no-ingest] Skipping new trade ingestion — resolving existing trades only.")
     else:
@@ -1041,18 +1209,24 @@ def main() -> None:
         print(f"Ingested {new_count} new trade(s) from snapshots.  Skipped by agent: {skipped_count}")
     print(f"Total trades: {len(trades)}  |  Open: {sum(1 for t in trades if t['outcome'] is None)}")
 
-    # 2. Resolve eligible open trades + shadow-resolve skipped trades
+    # 2. Resolve eligible open trades + shadow-resolve skipped/shadow trades
     resolved, still_open = resolve_trades(trades, dry_run=args.dry_run)
     if not args.dry_run:
         shadow_count = resolve_skipped_trades()
         if shadow_count:
             print(f"Shadow-resolved {shadow_count} skipped trade(s).")
+        shadow_trade_count = resolve_shadow_trades()
+        if shadow_trade_count:
+            print(f"Shadow-resolved {shadow_trade_count} shadow trade(s).")
     print(f"Resolved: {resolved}  |  Still pending (game not finished): {still_open}")
 
     # 3. Save trades
     save_trades(trades, dry_run=args.dry_run)
 
     # 3b. Settle any sandbox positions whose paper trade just resolved
+    # (sandbox_trades is a single cross-desk table keyed by paper_trade_id, so
+    # this call is desk-agnostic — passing this desk's trades only matches
+    # this desk's own sandbox rows)
     if not args.dry_run:
         try:
             from execution.position_manager import settle_resolved_positions
@@ -1069,6 +1243,25 @@ def main() -> None:
 
     if args.dry_run:
         print("  [dry-run] No files written.\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run",   action="store_true", help="Resolve but don't write files")
+    parser.add_argument("--force-all", action="store_true", help="Re-resolve all trades including already-resolved")
+    parser.add_argument("--no-ingest", action="store_true",
+                         help="Skip ingesting new trades from snapshots — resolve/settle existing trades only. "
+                              "Used to halt new trade generation while letting open positions run to resolution.")
+    args = parser.parse_args()
+
+    from core.desk_loader import get_active_desks
+    desks = get_active_desks()
+    if not desks:
+        print("No active desks found in desks/*.yaml — nothing to resolve.")
+        return
+
+    for desk in desks:
+        _run_for_desk(desk, args)
 
 
 if __name__ == "__main__":

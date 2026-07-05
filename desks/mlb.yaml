@@ -1,0 +1,128 @@
+desk_id: MLB
+desk_name: MLB Sports Desk
+icon: "⚾"
+desk_status: ACTIVE
+market:
+  series_ticker: KXMLBGAME
+  sport_display_key: MLB
+  market_type: two_way_moneyline
+odds_api:
+  sport_key: baseball_mlb
+  secondary_books: [draftkings, fanduel]
+data_paths:
+  paper_trades: data/mlb/paper_trades.json
+  skipped_trades: data/mlb/skipped_trades.json
+  shadow_trades: data/mlb/shadow_trades.json
+  monitor_cache: data/mlb/monitor_cache.json
+  gap_curves_db: data/mlb/gap_curves.db
+  snapshots_dir: data/mlb/snapshots/
+  performance_summary: data/mlb/performance_summary.json
+  agent_cost_log: data/mlb/agent_cost_log.csv
+  funnel_log: data/mlb/funnel_log.json
+  tier_investigation: data/mlb/tier_investigation.csv
+teams:
+  # KALSHI_ALIAS-style map: Kalshi yes_sub_title fragment -> Vegas name fragment,
+  # consumed by match_team() which fuzzy-matches the result against Vegas team
+  # names. Canonical merge of the three diverged copies found during the
+  # 2026-07-04 rebuild audit (scripts/snapshot_gaps.py, live_gap_detector.py,
+  # scripts/backtest_gap.py) — live_gap_detector.py's version was the most
+  # complete (included "NJ": "Nets", missing from the other two) and is used
+  # as the base here.
+  alias_map:
+    "A's": Athletics
+    "Chicago C": Cubs
+    "Chicago WS": White Sox
+    "Los Angeles A": Angels
+    "Los Angeles D": Dodgers
+    "New York M": Mets
+    "New York Y": Yankees
+    "LA": Lakers
+    "LA C": Clippers
+    "GS": Warriors
+    "NY": Knicks
+    "NO": Pelicans
+    "OKC": Thunder
+    "SA": Spurs
+    "NJ": Nets
+  # Separate mapping system: standard 2-3 letter abbreviation -> full team name,
+  # consumed directly (no fuzzy matching) by analysis/normalizer.py /
+  # analysis/merger.py. Kept distinct from alias_map above because the two
+  # systems have colliding keys with different intended values (e.g. "OKC"
+  # means "Thunder" for fuzzy-match purposes here but "Oklahoma City Thunder"
+  # for direct-merge purposes there) — cannot be safely combined into one dict.
+  abbreviation_map:
+    NYY: New York Yankees
+    LAD: Los Angeles Dodgers
+    BOS: Boston Red Sox
+    CHC: Chicago Cubs
+    SF: San Francisco Giants
+    ATL: Atlanta Braves
+    HOU: Houston Astros
+    NYM: New York Mets
+    PHI: Philadelphia Phillies
+    SD: San Diego Padres
+    STL: St. Louis Cardinals
+    MIL: Milwaukee Brewers
+    MIN: Minnesota Twins
+    TOR: Toronto Blue Jays
+    SEA: Seattle Mariners
+    TB: Tampa Bay Rays
+    CLE: Cleveland Guardians
+    BAL: Baltimore Orioles
+    TEX: Texas Rangers
+    ARI: Arizona Diamondbacks
+    COL: Colorado Rockies
+    CIN: Cincinnati Reds
+    DET: Detroit Tigers
+    CWS: Chicago White Sox
+    KC: Kansas City Royals
+    OAK: Oakland Athletics
+    LAA: Los Angeles Angels
+    MIA: Miami Marlins
+    PIT: Pittsburgh Pirates
+    WSH: Washington Nationals
+agent:
+  prompt:
+    market_description: MLB baseball game
+    disqualifiers:
+      - Starting pitcher confirmed scratch TODAY
+        announced in last 24 hours
+      - Key position player top 3 hitter or cleanup
+        ruled out TODAY
+      - Game postponed or weather cancellation
+        announced
+    not_disqualifiers:
+      - Chronic IL players already known 48+ hours
+        Acuña Strider Seager and similar
+      - Historical injury mentions or career history
+      - Pitching matchup statistics or trends
+      - General team trends or season statistics
+      - Recovery updates on players already known out
+    behavioral_patterns:
+      - "HOME_PREMIUM: retail overprices home teams"
+      - "NAME_RECOGNITION: famous franchises overpriced"
+      - "FAVORITE_LONGSHOT: retail underprices heavy favs"
+      - "RECENCY: recent streak disproportionately weighted"
+      - "PUBLIC_NARRATIVE: media storyline driving Kalshi"
+    search_query_template: >
+      {home_team} {away_team} starting pitcher
+      lineup injury scratch last 24 hours {date}
+    search_context: >
+      Report starting pitchers injuries lineup
+      changes or weather postponements only
+  chronic_keywords:
+    - acuna
+    - strider
+    - seager
+    - tommy john
+    - 60-day
+    - season-ending
+    - placed on il
+  new_scratch_keywords:
+    - scratch
+    - ruled out
+    - questionable
+    - game-time decision
+    - late scratch
+    - will not start
+    - is out tonight

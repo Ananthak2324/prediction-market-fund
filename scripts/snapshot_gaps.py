@@ -33,19 +33,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.utils import remove_vig, ticker_to_utc
+from core.desk_loader import get_desk, get_active_desks
 
 KALSHI_BASE = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 ODDS_BASE   = os.getenv("ODDS_API_BASE",   "https://api.theoddsapi.com")
 ODDS_KEY    = os.getenv("ODDS_API_KEY",    "")
 
-SERIES     = {"mlb": "KXMLBGAME", "nba": "KXNBAGAME", "wnba": "KXWNBAGAME"}
-SPORT_KEYS = {"mlb": "baseball_mlb", "nba": "basketball_nba", "wnba": "basketball_wnba"}
-
 SNAPSHOT_DIR = "data/snapshots"
 MASTER_LOG   = os.path.join(SNAPSHOT_DIR, "master_log.json")
 
-GAP_THRESHOLD = 0.05  # flag any side where |kalshi - pinnacle| >= this
-
+# Fallback alias map for callers that pass no alias_map (e.g. ad-hoc scripts
+# not yet migrated to desk config). desks/mlb.yaml's teams.alias_map is the
+# canonical, actively-maintained source going forward.
 KALSHI_ALIAS = {
     "A's":           "Athletics",
     "Chicago C":     "Cubs",
@@ -66,12 +65,18 @@ KALSHI_ALIAS = {
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def normalise(sub: str) -> str:
-    return KALSHI_ALIAS.get(sub, sub)
+def normalise(sub: str, alias_map: dict | None = None) -> str:
+    return (alias_map if alias_map is not None else KALSHI_ALIAS).get(sub, sub)
 
 
-def match_team(kalshi_sub: str, vegas_teams: list[str]) -> str | None:
-    kw = normalise(kalshi_sub).lower()
+def match_team(kalshi_sub: str, vegas_teams: list[str], alias_map: dict | None = None) -> str | None:
+    """
+    alias_map: desk-specific Kalshi-fragment -> Vegas-fragment map (see
+    desks/mlb.yaml teams.alias_map). Falls back to the module-level
+    KALSHI_ALIAS dict when not provided, for backward compatibility with
+    callers that haven't been migrated to desk config yet.
+    """
+    kw = normalise(kalshi_sub, alias_map).lower()
     for t in vegas_teams:
         if kw in t.lower():
             return t
@@ -156,10 +161,13 @@ def _build_retail_index(retail_games: list[dict]) -> dict:
 
 # ── build snapshot rows ───────────────────────────────────────────────────────
 
-def build_rows(sport: str) -> list[dict]:
-    raw_markets  = fetch_kalshi_open(SERIES[sport])
-    vegas_games  = fetch_pinnacle(SPORT_KEYS[sport])
-    retail_index = _build_retail_index(fetch_retail_books(SPORT_KEYS[sport]))
+def build_rows(desk) -> list[dict]:
+    """desk: core.desk_loader.DeskConfig."""
+    alias_map    = desk.alias_map
+    gap_min      = desk.gap_min
+    raw_markets  = fetch_kalshi_open(desk.series_ticker)
+    vegas_games  = fetch_pinnacle(desk.sport_key)
+    retail_index = _build_retail_index(fetch_retail_books(desk.sport_key))
 
     # Index Vegas by (home, away).
     # Pinnacle sometimes returns the same matchup twice (tonight + tomorrow).
@@ -196,7 +204,7 @@ def build_rows(sport: str) -> list[dict]:
         for (home_v, away_v) in by_teams:
             mapping = {}
             for ks in k_names:
-                m = match_team(ks, [home_v, away_v])
+                m = match_team(ks, [home_v, away_v], alias_map=alias_map)
                 if m:
                     mapping[ks] = m
             if len(mapping) == 2 and len(set(mapping.values())) == 2:
@@ -233,7 +241,7 @@ def build_rows(sport: str) -> list[dict]:
 
             # Flag any side where the gap is large enough in either direction
             # gap < 0 → Kalshi underprices (BUY_YES)   gap > 0 → Kalshi overprices (BUY_NO)
-            fav_flag  = abs(gap) >= GAP_THRESHOLD
+            fav_flag  = abs(gap) >= gap_min
             signal    = "BUY_YES" if gap < 0 else "BUY_NO"
             _start    = ticker_to_utc(s.get("event_ticker", ""))
             start_utc = _start.strftime("%Y-%m-%dT%H:%M:%SZ") if _start else s.get("occurrence_datetime", "")
@@ -244,7 +252,7 @@ def build_rows(sport: str) -> list[dict]:
             fd_vf  = retail_probs.get("fanduel",    {}).get(vs_name)
 
             rows.append({
-                "sport":           sport.upper(),
+                "sport":           desk.sport_display_key,
                 "game":            f"{away_v} @ {home_v}",
                 "team":            vs_name,
                 "side":            "HOME" if is_home else "AWAY",
@@ -297,7 +305,7 @@ def save_snapshot(rows: list[dict], ts: str, dry_run: bool = False) -> str:
 
 # ── print ─────────────────────────────────────────────────────────────────────
 
-def print_snapshot(rows: list[dict], ts: str) -> None:
+def print_snapshot(rows: list[dict], ts: str, gap_min: float = 0.05) -> None:
     flagged = [r for r in rows if r["fav_flag"]]
 
     print(f"\n{'═'*100}")
@@ -316,7 +324,7 @@ def print_snapshot(rows: list[dict], ts: str) -> None:
 
     print(f"\n  {'─'*60}")
     print(f"  Total game-sides     : {len(rows)}")
-    print(f"  Flagged trades ★     : {len(flagged)}  (|Kalshi − Pinnacle| ≥ {GAP_THRESHOLD:.0%})")
+    print(f"  Flagged trades ★     : {len(flagged)}  (|Kalshi − Pinnacle| ≥ {gap_min:.0%})")
     if flagged:
         print(f"\n  ★ TRADES:")
         for r in sorted(flagged, key=lambda x: x["abs_gap"], reverse=True):
@@ -332,22 +340,28 @@ def print_snapshot(rows: list[dict], ts: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sport", choices=["mlb", "nba", "wnba", "both", "all"], default="all")
+    parser.add_argument("--desk", default=None,
+                        help="Desk to scan (e.g. MLB, WNBA). See desks/*.yaml.")
+    parser.add_argument("--all-desks", action="store_true",
+                        help="Scan all ACTIVE desks. Default when --desk is omitted.")
     parser.add_argument("--dry-run", action="store_true", help="Print only, don't save")
     args = parser.parse_args()
 
-    if args.sport in ("both", "all"):
-        sports = list(SERIES.keys())
+    if args.desk and not args.all_desks:
+        desks = [get_desk(args.desk)]
     else:
-        sports = [args.sport]
-    ts     = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
+        desks = get_active_desks()
 
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M")
     all_rows: list[dict] = []
+    gap_min = desks[0].gap_min if desks else 0.05
 
-    for sport in sports:
-        print(f"Fetching {sport.upper()}...", end="  ", flush=True)
+    for desk in desks:
+        if not desk.is_active:
+            continue
+        print(f"Fetching {desk.desk_id}...", end="  ", flush=True)
         try:
-            rows = build_rows(sport)
+            rows = build_rows(desk)
             print(f"{len(rows)} sides matched")
             all_rows.extend(rows)
         except Exception as e:
@@ -357,7 +371,7 @@ def main() -> None:
         print("\nNo live games found.")
         return
 
-    print_snapshot(all_rows, ts)
+    print_snapshot(all_rows, ts, gap_min)
 
     if args.dry_run:
         print("  [dry-run] Nothing saved.\n")

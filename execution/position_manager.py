@@ -28,11 +28,37 @@ load_dotenv()
 
 from execution.position_sizer import calculate_position, get_available_cash
 from core.notifications import send_imessage
+from core.desk_loader import DeskConfig, get_desk
 
 DB_PATH      = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "paper_trades.db")
 KALSHI_BASE  = os.getenv("KALSHI_API_BASE", "https://api.elections.kalshi.com/trade-api/v2")
 ET           = ZoneInfo("America/New_York")
-SANDBOX_START_DATE = "2026-06-25"
+
+# Retained for scripts that import this constant directly (e.g. the one-time
+# reset script) — desk.get("risk.sandbox_start_date") is authoritative.
+SANDBOX_START_DATE = "2026-07-05"
+
+
+def _shared_risk_desk() -> DeskConfig:
+    """
+    poll_open_positions() operates on all OPEN sandbox rows across every desk
+    at once — the sandbox_trades table has no desk_id column. All active desks
+    currently share identical risk.* values from desks/base.yaml (WNBA only
+    overrides sandbox_start_date), so using MLB's merged config here is safe.
+    Revisit if a future desk ever overrides stop_loss_pct/profit_target_pct/
+    near_resolution_hours differently.
+    """
+    return get_desk("MLB")
+
+
+# ── 2026-07-04 rebuild: position-count cap + drawdown circuit breaker ──────────
+# The 50.8% max drawdown found in strategy_analysis_report.md traced to multiple
+# losing positions opening simultaneously with no concurrent-position limit —
+# calculate_position() already sizes against *current* bankroll, so that part
+# of the original theory didn't hold up under exploration; the missing guardrail
+# was purely the concurrency cap.
+MAX_CONCURRENT_POSITIONS = 4
+MAX_DRAWDOWN_PAUSE       = 0.20
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -131,19 +157,52 @@ def _fetch_kalshi_yes_mid(kalshi_ticker: str) -> float | None:
         return None
 
 
+# ── Position controls (2026-07-04 rebuild) ─────────────────────────────────────
+
+def count_open_positions(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM sandbox_trades WHERE status = 'OPEN'").fetchone()
+    return row[0] if row else 0
+
+
+def _current_drawdown(conn: sqlite3.Connection) -> float:
+    """Running-peak drawdown from sandbox_bankroll_history — same logic the
+    dashboard's max-drawdown card uses, but evaluated against the *latest*
+    bankroll rather than the historical max."""
+    rows = conn.execute(
+        "SELECT bankroll FROM sandbox_bankroll_history ORDER BY timestamp ASC"
+    ).fetchall()
+    bks = [r[0] for r in rows if r[0] is not None]
+    if not bks:
+        return 0.0
+    peak = bks[0]
+    for b in bks:
+        peak = max(peak, b)
+    latest = bks[-1]
+    return (peak - latest) / peak if peak > 0 else 0.0
+
+
 # ── Open position ─────────────────────────────────────────────────────────────
 
-def open_sandbox_position(paper_trade: dict) -> bool:
+def open_sandbox_position(paper_trade: dict, desk: DeskConfig | None = None) -> bool:
     """
     Open a sandbox position for a newly ingested paper trade.
     Returns True if a position was opened, False if skipped.
 
+    desk: sourced from desks/<id>.yaml. Falls back to the shared risk desk
+    (see _shared_risk_desk()) if not provided, for backward compatibility
+    with any caller that hasn't been migrated yet.
+
     Skipped when:
-      - entry_date < 2026-06-25
+      - entry_date < desk's sandbox_start_date
       - shares == 0 (position too small)
       - actual_cost > available_cash
       - paper_trade_id already has an open position
+      - drawdown circuit breaker is active
+      - concurrent position cap is reached
     """
+    desk = desk or _shared_risk_desk()
+    sandbox_start_date = desk.get("risk.sandbox_start_date", SANDBOX_START_DATE)
+
     # Compute entry_date in ET from start_utc
     start_utc_str = paper_trade.get("start_utc", "")
     try:
@@ -152,7 +211,7 @@ def open_sandbox_position(paper_trade: dict) -> bool:
     except (ValueError, AttributeError):
         return False
 
-    if entry_date < SANDBOX_START_DATE:
+    if entry_date < sandbox_start_date:
         return False
 
     trade_id = paper_trade.get("trade_id", "")
@@ -181,7 +240,10 @@ def open_sandbox_position(paper_trade: dict) -> bool:
     away_team = parts[0].strip() if len(parts) == 2 else ""
     home_team = parts[1].strip() if len(parts) == 2 else ""
     abs_gap   = paper_trade.get("abs_gap", 0) or abs(paper_trade.get("gap", 0))
-    tier      = "C" if abs_gap >= 0.15 else ("B" if abs_gap >= 0.10 else "A")
+    tier      = paper_trade.get("tier") or desk.gap_tier(abs_gap)
+
+    max_drawdown_pause = desk.max_drawdown_pause_pct
+    max_concurrent     = desk.max_concurrent_positions
 
     conn = get_db()
     try:
@@ -192,8 +254,28 @@ def open_sandbox_position(paper_trade: dict) -> bool:
         ).fetchone():
             return False
 
+        # CIRCUIT BREAKER — pause new positions if drawdown exceeds threshold
+        drawdown = _current_drawdown(conn)
+        if drawdown >= max_drawdown_pause:
+            print(
+                f"[SANDBOX] Portfolio circuit breaker ACTIVE. Drawdown {drawdown:.1%} "
+                f"exceeds {max_drawdown_pause:.0%} threshold. No new sandbox positions "
+                f"until bankroll recovers."
+            )
+            return False
+
+        # CONCURRENT CAP — max positions open at once
+        open_count = count_open_positions(conn)
+        if open_count >= max_concurrent:
+            print(
+                f"[SANDBOX] Concurrent cap reached ({open_count}/{max_concurrent}). "
+                f"Skipping sandbox position."
+            )
+            return False
+
         available_cash, total_bankroll = get_available_cash(conn)
-        sizing = calculate_position(total_bankroll, entry_price, pinnacle_prob)
+        kelly_mult = paper_trade.get("kelly_multiplier_used", desk.tier_kelly.get("A", 0.25))
+        sizing = calculate_position(total_bankroll, entry_price, pinnacle_prob, kelly_multiplier=kelly_mult)
 
         if sizing["shares"] == 0:
             print(f"[SANDBOX SKIP] {game} — position too small (0 shares)")
@@ -306,7 +388,16 @@ def poll_open_positions() -> int:
     """
     Check all OPEN sandbox positions against current Kalshi prices.
     Applies exit rules in priority order. Returns number of positions closed.
+
+    Exit-rule thresholds come from desks/base.yaml (risk.stop_loss_pct etc.) —
+    see _shared_risk_desk() for why a single desk's merged config is used here.
     """
+    desk = _shared_risk_desk()
+    stop_loss_pct        = desk.get("risk.stop_loss_pct", -0.40)
+    profit_target_pct    = desk.get("risk.profit_target_pct", 0.80)
+    near_resolution_hrs  = desk.get("risk.near_resolution_hours", 2.0)
+    near_resolution_pnl  = desk.get("risk.near_resolution_min_pnl", 0.10)
+
     conn = get_db()
     closed = 0
     try:
@@ -344,11 +435,13 @@ def poll_open_positions() -> int:
             exit_type = None
             if current_price >= pinnacle_prob:
                 exit_type = "FAIR_VALUE"
-            elif pnl_pct <= -0.40:
+            elif pnl_pct <= stop_loss_pct:
                 exit_type = "STOP_LOSS"
-            elif pnl_pct >= 0.80:
+            elif pnl_pct >= profit_target_pct:
                 exit_type = "PROFIT_TARGET"
-            elif hours_to_game_end is not None and hours_to_game_end < 2 and pnl_pct > 0.10:
+            elif (hours_to_game_end is not None
+                  and hours_to_game_end < near_resolution_hrs
+                  and pnl_pct > near_resolution_pnl):
                 exit_type = "NEAR_RESOLUTION"
 
             if exit_type:
