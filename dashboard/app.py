@@ -31,7 +31,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st_autorefresh(interval=60000, key="dashboard_refresh")
+# 5 min, not 60s: a short interval risks Streamlit cancelling a slow in-flight
+# script run (e.g. a long Intelligence Agent answer) when the timer fires
+# mid-request — the run gets silently discarded with no exception logged.
+# Backend data itself only updates every 15-30 min, so 5 min stays fresh enough.
+st_autorefresh(interval=300000, key="dashboard_refresh")
 
 # ─── global CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
