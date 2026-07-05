@@ -88,12 +88,16 @@ class MemoryAgent:
         messages = list(history) + [{"role": "user", "content": question}]
         response = self._client.messages.create(
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=8192,
             system=self._system,
             messages=messages,
         )
         _log_cost(question, response.usage)
-        return response.content[0].text
+        text_blocks = [b.text for b in response.content if getattr(b, "type", None) == "text"]
+        answer = "".join(text_blocks) if text_blocks else "(No text returned by the agent.)"
+        if response.stop_reason == "max_tokens":
+            answer += "\n\n*— response cut off at the token limit. Ask a narrower question for a complete answer.*"
+        return answer
 
     # ── Context assembly ──────────────────────────────────────────────────────
 
