@@ -793,7 +793,7 @@ def gap_bucket(abs_gap: float) -> str:
     return "15_plus"
 
 
-def build_summary(trades: list[dict]) -> dict:
+def build_summary(trades: list[dict], shadow_entries: list[dict] | None = None) -> dict:
     # PAUSED trades (MONITOR-relabeling bug contamination — see Bug Fix 2) are excluded
     # from every performance calculation below but remain visible in the raw Trade Log.
     total_paused = sum(1 for t in trades if t.get("status") == "PAUSED")
@@ -897,13 +897,14 @@ def build_summary(trades: list[dict]) -> dict:
             "shadow_win_rate":  round(w / len(res), 4) if res else None,
         }
 
-    shadow_entries: list[dict] = []
-    if os.path.exists(SHADOW_FILE):
-        try:
-            with open(SHADOW_FILE) as f:
-                shadow_entries = json.load(f)
-        except (json.JSONDecodeError, ValueError):
-            pass
+    if shadow_entries is None:
+        shadow_entries = []
+        if os.path.exists(SHADOW_FILE):
+            try:
+                with open(SHADOW_FILE) as f:
+                    shadow_entries = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
     tier_performance = {
         "A": {

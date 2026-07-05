@@ -157,44 +157,50 @@ def load_trades() -> pd.DataFrame:
 @st.cache_data(ttl=30)
 def load_summary() -> dict:
     """
-    Merges performance_summary.json across active desks into one dict for the
-    dashboard's cross-desk views. Top-level counts are summed; win rates are
-    recomputed from the summed counts rather than averaged.
+    Rebuilds one performance summary from the raw trades/shadow-trades of every
+    active desk, so every field (tier/signal breakdowns, gap buckets, agent
+    stats, p-values, ...) is computed from the same fully-aggregated dataset
+    the headline metric cards use — rather than merging each desk's
+    already-summarized JSON, which left most nested fields reflecting only
+    one desk (see 2026-07-05 Performance tab mismatch fix).
     """
     from core.desk_loader import get_active_desks
-    summaries = []
+    from scripts.update_outcomes import build_summary
+
+    all_trades: list[dict] = []
+    all_shadow: list[dict] = []
+    found_any = False
     for desk in get_active_desks():
-        fp = _p(desk.performance_summary_path)
+        fp = _p(desk.paper_trades_path)
         if os.path.exists(fp):
+            found_any = True
             try:
                 with open(fp) as f:
-                    s = json.load(f)
-                if s:
-                    summaries.append(s)
+                    all_trades.extend(json.load(f))
+            except Exception:
+                pass
+        sp = _p(desk.shadow_trades_path)
+        if os.path.exists(sp):
+            try:
+                with open(sp) as f:
+                    all_shadow.extend(json.load(f))
             except Exception:
                 pass
 
-    if not summaries:
-        fp = _p("data", "performance_summary.json")
-        if os.path.exists(fp):
-            try:
-                with open(fp) as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
+    if found_any:
+        try:
+            return build_summary(all_trades, shadow_entries=all_shadow)
+        except Exception:
+            pass
 
-    if len(summaries) == 1:
-        return summaries[0]
-
-    # Merge: sum top-level counts, recompute win_rate_overall from the sums.
-    merged = dict(summaries[0])
-    for key in ("total_logged", "total_paused", "total_resolved", "total_valid",
-                "total_valid_wins", "total_excluded", "total_open"):
-        merged[key] = sum(s.get(key, 0) or 0 for s in summaries)
-    if merged.get("total_valid"):
-        merged["win_rate_overall"] = round(merged["total_valid_wins"] / merged["total_valid"], 4)
-    return merged
+    fp = _p("data", "performance_summary.json")
+    if os.path.exists(fp):
+        try:
+            with open(fp) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
 
 
 @st.cache_data(ttl=30)
