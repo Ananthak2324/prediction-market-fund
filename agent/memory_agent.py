@@ -98,39 +98,76 @@ class MemoryAgent:
     # ── Context assembly ──────────────────────────────────────────────────────
 
     def _load_context(self) -> str:
+        from core.desk_loader import get_active_desks
+
         ctx: dict = {"loaded_at": datetime.now(timezone.utc).isoformat()}
 
         ctx["system_overview"] = _read_text(os.path.join(BASE, "system_overview.md"))
 
-        trades = _read_json(os.path.join(BASE, "data", "paper_trades.json"), default=[])
-        if isinstance(trades, list):
-            trades = sorted(trades, key=lambda t: t.get("snapshot_time", ""))
-            ctx["paper_trades"] = trades[-50:]
+        desks = get_active_desks()
+
+        all_trades: list[dict] = []
+        all_skipped: list[dict] = []
+        all_shadow: list[dict] = []
+        summaries: dict[str, dict] = {}
+        cost_rows: list[dict] = []
+        funnel: dict[str, list] = {}
+        found_desk_data = False
+
+        for desk in desks:
+            tp = _read_json(os.path.join(BASE, desk.paper_trades_path), default=None)
+            if isinstance(tp, list):
+                found_desk_data = True
+                for t in tp:
+                    t.setdefault("desk_id", desk.desk_id)
+                all_trades.extend(tp)
+
+            sp = _read_json(os.path.join(BASE, desk.skipped_trades_path), default=None)
+            if isinstance(sp, list):
+                all_skipped.extend(sp)
+
+            sh = _read_json(os.path.join(BASE, desk.shadow_trades_path), default=None)
+            if isinstance(sh, list):
+                all_shadow.extend(sh)
+
+            perf = _read_json(os.path.join(BASE, desk.performance_summary_path), default=None)
+            if perf:
+                summaries[desk.desk_id] = perf
+
+            cost_rows.extend(
+                _read_csv_tail(os.path.join(BASE, desk.agent_cost_log_path), n=50) or []
+            )
+
+            fl = _read_json(os.path.join(BASE, desk.funnel_log_path), default=None)
+            if fl is not None:
+                funnel[desk.desk_id] = fl
+
+        if found_desk_data:
+            all_trades = sorted(all_trades, key=lambda t: t.get("snapshot_time", ""))
+            ctx["paper_trades"]       = all_trades[-50:]
+            ctx["skipped_trades"]     = all_skipped[-30:] if all_skipped else None
+            ctx["shadow_trades"]      = all_shadow[-30:] if all_shadow else None
+            ctx["performance_summary_by_desk"] = summaries
+            ctx["agent_cost_log"]     = cost_rows[-50:] if cost_rows else None
+            ctx["funnel_log_by_desk"] = funnel or None
         else:
-            ctx["paper_trades"] = None
-
-        skipped = _read_json(os.path.join(BASE, "data", "skipped_trades.json"), default=[])
-        if isinstance(skipped, list):
-            ctx["skipped_trades"] = skipped[-30:]
-        else:
-            ctx["skipped_trades"] = None
-
-        ctx["performance_summary"] = _read_json(
-            os.path.join(BASE, "data", "performance_summary.json"), default=None
-        )
-
-        ctx["agent_cost_log"] = _read_csv_tail(
-            os.path.join(BASE, "data", "agent_cost_log.csv"), n=50
-        )
+            # Fallback: pre-desk-migration shared paths (local dev only).
+            trades = _read_json(os.path.join(BASE, "data", "paper_trades.json"), default=[])
+            ctx["paper_trades"] = sorted(trades, key=lambda t: t.get("snapshot_time", ""))[-50:] \
+                if isinstance(trades, list) else None
+            skipped = _read_json(os.path.join(BASE, "data", "skipped_trades.json"), default=[])
+            ctx["skipped_trades"] = skipped[-30:] if isinstance(skipped, list) else None
+            ctx["shadow_trades"] = None
+            ctx["performance_summary_by_desk"] = {
+                "_shared": _read_json(os.path.join(BASE, "data", "performance_summary.json"), default=None)
+            }
+            ctx["agent_cost_log"] = _read_csv_tail(os.path.join(BASE, "data", "agent_cost_log.csv"), n=50)
+            ctx["funnel_log_by_desk"] = None
 
         ctx["edge_discovery_latest"] = _read_latest_edge_discovery()
 
         ctx["gap_curve_analysis"] = _read_json(
             os.path.join(BASE, "data", "gap_curve_analysis.json"), default=None
-        )
-
-        ctx["funnel_log"] = _read_json(
-            os.path.join(BASE, "data", "funnel_log.json"), default=None
         )
 
         return json.dumps(ctx, indent=2, default=str)

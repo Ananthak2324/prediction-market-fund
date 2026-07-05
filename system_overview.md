@@ -18,8 +18,10 @@ When Kalshi's price diverges from what sharp money (Pinnacle) says the true prob
 
 ## How It Works — Step by Step
 
+> **Rebuilt 2026-07-04.** The system now runs on a desk-config architecture (`desks/base.yaml`, `desks/mlb.yaml`, `desks/wnba.yaml`, `desks/nfl.yaml` loaded via `core/desk_loader.py`) instead of hardcoded per-sport constants, and trade origination was consolidated to a single pipeline after a rebuild fixed two data-contamination bugs (a legacy trade pipeline that bypassed pre-filtering, and a MONITOR-verdict relabeling bug). See "The 2026-07-04 Rebuild" section below for what changed and why.
+
 ### 1. Wide Market Scan (every 2 hours, unconditional)
-Every 2 hours, the server runs `snapshot_gaps.py --sport all` across all open Kalshi markets for MLB and WNBA — regardless of how far away the games are. This captures gaps on markets that Kalshi has opened 1-3 days before the game, where the biggest behavioral mispricings tend to appear when retail bettors first encounter a new market.
+Every 2 hours, the server runs `snapshot_gaps.py --all-desks` across all open Kalshi markets for every active desk (MLB, WNBA) — regardless of how far away the games are. This captures gaps on markets that Kalshi has opened 1-3 days before the game, where the biggest behavioral mispricings tend to appear when retail bettors first encounter a new market.
 
 ### 2. Pre-Game Snapshot Capture (every 10 minutes, gated)
 Within a tighter 20-minute window centered at 110-130 minutes before each specific game, a more precise snapshot fires. For each game in that window, it:
@@ -34,8 +36,8 @@ Both pipelines feed the same snapshot format. The wide scan catches early-open g
 ### 3. Gap Curve Tracker (always-on daemon)
 A separate always-on service polls every 5 minutes and writes a row to `data/gap_curves.db` for every open Kalshi market. This builds a continuous time-series of how the gap between Kalshi and Pinnacle evolves from the moment a market opens until game start. The dashboard's Gap Curves tab reads this database to answer: does the gap close monotonically, does it spike and correct, and what's the optimal entry window?
 
-### 4. Edge Discovery (every 30 minutes)
-Every 30 minutes, the edge discovery agent makes its own live API calls to Kalshi and Pinnacle — independent of the snapshot pipeline — and classifies any gap above 5% into one of 5 edge types:
+### 4. Edge Discovery (every 30 minutes) — the sole trade-origination pipeline
+Every 30 minutes, the edge discovery agent (`agent/edge_discovery_agent.py`) makes its own live API calls to Kalshi and Pinnacle — independent of the snapshot pipeline — and classifies any gap above 5% into one of 5 edge types. Since the 2026-07-04 rebuild, this is the **only** path a trade can be created through: `scripts/update_outcomes.py`'s old `ingest_new_trades()` (a second, unprotected trade-origination path that shared the same ledger) has been permanently disabled. Every trade record carries `"pipeline_source": "edge_discovery_agent"` for audit.
 
 | Edge Type | What It Means | Default Action |
 |-----------|--------------|----------------|
@@ -47,12 +49,7 @@ Every 30 minutes, the edge discovery agent makes its own live API calls to Kalsh
 
 Edge discovery scans both pre-game and in-progress markets. In-game gaps are real opportunities — if a team is losing early and Kalshi overreacts, but Pinnacle's pre-game line (already accounting for the team's true quality) suggests the market has overcorrected, that's a behavioral edge worth evaluating.
 
-**Cost control:** Before calling the research agent on any candidate, the system checks three caches:
-- `paper_trades.json` — already traded this game? Skip entirely.
-- `skipped_trades.json` — already SKIPped within the last 6 hours? Skip.
-- `monitor_cache.json` — already MONITORed within the last 3 hours? Skip (re-evaluate later when closer to game time).
-
-This prevents the same game from being researched on every 30-minute cycle.
+**Cost control:** Before calling the research agent on any candidate, the system checks three per-desk caches (`data/<desk>/paper_trades.json`, `data/<desk>/skipped_trades.json`, `data/<desk>/monitor_cache.json`), with a 1-hour cooldown on both SKIP and MONITOR re-checks (reduced from 6h/3h in the rebuild once the legacy pipeline stopped starving the clean one of candidates). Only tickers already traded via `edge_discovery_agent` count as "already traded" — this prevents old contamination from blocking re-evaluation of a game.
 
 ### 5. Research Agent (triggered per new candidate)
 For any gap above 5% that clears the cooldown check, the research agent is called. It:
@@ -62,11 +59,14 @@ For any gap above 5% that clears the cooldown check, the research agent is calle
 - Applies decision rules specific to the edge type it was handed
 - Returns a verdict: **TRADE**, **SKIP**, or **MONITOR**
 
-Only **TRADE** verdicts are logged to `paper_trades.json`. MONITOR means "re-evaluate later" and is held in the cooldown cache. SKIP means "real information explains the gap" and is logged to `skipped_trades.json` for tracking. If the Anthropic API call fails for any reason, nothing is logged — the system does not guess.
+A TRADE verdict then passes through **signal gates** (`apply_signal_gates()`) before it's logged: gap 5-10% → **Tier A**, full 0.25x Kelly sizing, actively traded. Gap 10-15% → **Tier B**, reduced 0.10x Kelly, actively traded but pending a 20-resolved-trade validation window (upgrades to full sizing above 55% win rate, downgrades to shadow-only below 45%). Gap ≥15% (**Tier C**) or a `BUY_NO` signal → routed to `data/<desk>/shadow_trades.json` instead — tracked with real outcomes but never actually paper-traded, since both were found to underperform pre-rebuild and are under investigation. MONITOR means "re-evaluate later" and is held in the cooldown cache. SKIP means "real information explains the gap" and is logged to `skipped_trades.json` for tracking. If the Anthropic API call fails for any reason, nothing is logged — the system does not guess.
+
+If a later re-evaluation on a cleaner snapshot downgrades an already-logged trade to MONITOR or SKIP, the trade is marked `status: "PAUSED"` (with a `paused_reason`) rather than silently overwritten — it stays visible in the raw trade log for audit but is excluded from every win-rate/EV calculation.
 
 ### 6. Position Manager (always-on daemon)
 Watches all open paper trades and:
-- Opens a sandbox position when a TRADE is logged (quarter-Kelly sizing against a $1,000 starting bankroll)
+- Opens a sandbox position when a TRADE is logged, sized by Kelly fraction × the tier's kelly multiplier (0.25 for Tier A, 0.10 for Tier B) against a $1,000 starting bankroll (sandbox reset to a clean start on 2026-07-05)
+- Enforces a hard cap of 4 concurrent open positions and an automatic circuit breaker that pauses new positions if drawdown exceeds 20%
 - Monitors live Kalshi prices for exit signals
 - Resolves trades when games settle
 - Sends iMessage notifications for every entry and resolution
@@ -100,12 +100,14 @@ A Linux VPS at `34.134.239.151` running 24/7. Handles everything:
 | `prediction-fund-weekly-audit.timer` | Sunday 11 PM UTC | Statistical audit |
 
 ### Dashboard
-Live at `http://34.134.239.151:8501`. Tabs:
-- **MLB / WNBA** — Open Market Gap Scanner showing all currently open Kalshi contracts sorted by gap size, with Action column (TRADE ✓ / WATCH / —). Only pre-game markets shown (games that have already started are excluded to avoid spurious in-game gap signals in the scanner).
+Live at `http://34.134.239.151:8501`. Tabs are generated dynamically, one per active desk (currently MLB, WNBA — NFL is defined but `desk_status: PENDING` so it doesn't appear), plus fixed tabs:
+- **[Desk] tabs** (e.g. MLB, WNBA) — Open Market Gap Scanner showing all currently open Kalshi contracts sorted by gap size, with Action column (TRADE ✓ / WATCH / —). Only pre-game markets shown.
 - **Gap Curves** — Time-series chart of |gap| vs hours-to-game for each market, built from `gap_curves.db`. Shows the full lifecycle of how a gap opens and closes.
-- **Trade Log** — Every paper trade with research verdict, gap, outcome.
-- **Performance** — Win rate by tier, EV, statistical significance, p-value.
-- **Sandbox** — Simulated bankroll P&L.
+- **Trade Log** — Every paper trade with research verdict, gap, outcome, across all active desks.
+- **Performance** — Win rate by tier, EV, statistical significance, p-value — rebuilt from the combined raw trades + shadow trades across all active desks so it always matches the headline metric cards.
+- **Sandbox** — Simulated bankroll P&L, reset to a clean $1,000 start on 2026-07-05.
+- **Investigation** — Tier B validation progress toward its 20-trade upgrade/downgrade threshold, Tier C and BUY_NO shadow win rates.
+- **Intelligence** — this chatbot.
 - **System** — Health check for all services.
 
 ### Your Mac (local)
@@ -129,15 +131,22 @@ Dashboard reads directly from VPS (always up, no Mac needed)
 
 ## Key Data Files
 
+Every desk (MLB, WNBA, NFL) has its own namespaced data directory since the 2026-07-04 rebuild — `data/<desk_id>/` — so trades, skips, and shadow trades never mix across sports.
+
 | File | What It Contains |
 |------|-----------------|
-| `data/paper_trades.json` | Every logged trade — price at capture, research verdict, outcome |
-| `data/skipped_trades.json` | SKIP verdicts from research agent — tracked to see if agent filtering helps |
-| `data/monitor_cache.json` | MONITOR cooldown registry — prevents re-researching the same game within 3h |
+| `data/<desk>/paper_trades.json` | Every logged trade for that desk — price at capture, research verdict, outcome, tier, status (OPEN/CLOSED/PAUSED), pipeline_source |
+| `data/<desk>/skipped_trades.json` | SKIP verdicts from research agent — tracked to see if agent filtering helps |
+| `data/<desk>/shadow_trades.json` | Tier C and BUY_NO candidates — tracked with real outcomes but never actually paper-traded |
+| `data/<desk>/monitor_cache.json` | MONITOR cooldown registry — 1h cooldown |
+| `data/<desk>/performance_summary.json` | Per-desk win rates, EV, tier/signal breakdowns |
 | `data/gap_curves.db` | SQLite time-series of gap evolution per market (5-min resolution) |
-| `data/performance_summary.json` | Aggregated win rates, EV, tier breakdowns |
+| `data/paper_trades.db` | Sandbox portfolio (SQLite) — shared across desks, no per-desk table split yet |
 | `data/snapshots/` | Raw snapshot files, one per run |
 | `outputs/edge_discovery_*.json` | Full candidate + verdict output per sport per day |
+| `desks/*.yaml` | Per-desk configuration (thresholds, Kelly multipliers, team alias maps, agent prompts) loaded via `core/desk_loader.py` |
+
+Old shared top-level files (`data/paper_trades.json`, etc.) are frozen snapshots from the moment of migration — kept for audit, no longer written to.
 
 ---
 
@@ -156,24 +165,27 @@ The Odds API is not a quota risk — at 5-minute gap-curve polling plus 30-minut
 
 ## What Gets Tracked
 
-- **Paper trades** — every trade with: game, team, gap size, Kalshi price, Pinnacle price, research verdict, agent reasoning, outcome
-- **Win rate** — overall and by tier (Tier 1 ≥10% gap, Tier 2 5-10% gap)
+- **Paper trades** — every trade with: game, team, gap size, Kalshi price, Pinnacle price, research verdict, agent reasoning, outcome, tier, status
+- **Win rate** — overall and by tier (Tier A 5-10% gap, Tier B 10-15% gap, Tier C 15%+ gap shadow-only)
 - **EV per trade** — expected value, the core metric of whether the edge is real
 - **Skipped trades** — trades the research agent rejected; tracked to see if the agent is filtering correctly
-- **Agent cost** — every Claude API call logged with token counts and dollar cost
-- **Sandbox bankroll** — starting at $1,000, sized with quarter-Kelly, tracks simulated P&L
+- **Shadow trades** — Tier C and BUY_NO candidates tracked with real outcomes but never actually traded
+- **Agent cost** — every Claude API call logged with token counts and dollar cost, per desk
+- **Sandbox bankroll** — starting at $1,000 (reset 2026-07-05), sized by tier-specific Kelly multiplier, capped at 4 concurrent positions with a 20% drawdown circuit breaker
 
 ---
 
-## Current Status (as of July 2, 2026 — Day 9)
+## The 2026-07-04 Rebuild
 
-- **21 resolved trades total** — 13 wins, 8 losses — **61.9% overall win rate**
-- **Tier 2 (5-10% gap): 9/12 = 75.0%** — strongest signal, consistent edge
-- **Tier 1 (≥10% gap): 4/9 = 44.4%** — large gaps often carry real information; agent filtering still calibrating
-- **Agent-verified TRADE verdicts: 1/3 = 33.3%** — small sample, pipeline was recently wired up
-- **Sports active:** MLB, WNBA (NBA and NFL show no open Kalshi markets currently)
-- **Infrastructure:** Fully deployed on VPS since July 1, 2026. Dashboard live 24/7.
-- **Known issue fixed July 2:** MONITOR verdicts were incorrectly logged as paper trades; research API failures were also logged. Both now correctly suppressed.
+Prior to this date, a strategy-analysis report found two structural bugs contaminating every performance number:
+1. **Two independent trade-origination pipelines shared one ledger.** `edge_discovery_agent.py` and `update_outcomes.py`'s own `ingest_new_trades()` both wrote to `paper_trades.json` independently — 89% of trades came from the unprotected legacy path, which also starved the protected pipeline of candidates via cooldown/already-traded checks. **Fix:** `ingest_new_trades()` permanently disabled; `edge_discovery_agent.py` is now the sole origination path.
+2. **A silent MONITOR-relabeling bug.** Re-evaluating an already-logged trade on a cleaner snapshot unconditionally overwrote its fields even when the new verdict was a downgrade to MONITOR/SKIP. **Fix:** downgrades now set `status: "PAUSED"` instead of silently overwriting; 12 contaminated trades were fixed retroactively and excluded from all win-rate math (still visible in the raw log).
+
+The rebuild also added: the A/B/C tier + signal-gate system (replacing the old Tier 1/Tier 2 split), a concurrent-position cap and drawdown circuit breaker, a full desk-config layer (`desks/*.yaml` + `core/desk_loader.py`) replacing scattered hardcoded per-sport constants, and desk-namespaced data directories. Clean data collection began 2026-07-05 with a reset sandbox.
+
+## Current Status
+
+As of the rebuild, treat any trade dated before 2026-07-04 as pre-rebuild/contaminated data (still visible for audit but excluded from live performance stats). For live numbers, query the trade data and per-desk `performance_summary.json` directly rather than relying on any date-stamped summary in this document — this file describes architecture, not a point-in-time snapshot.
 
 ---
 
@@ -187,4 +199,4 @@ The Odds API is not a quota risk — at 5-minute gap-curve polling plus 30-minut
 
 ## The Goal
 
-Build enough of a track record (statistically significant win rate across 50+ trades) to validate the edge is real, then deploy real capital with proper Kelly sizing. The infrastructure is built to scale to new markets (NBA, NFL, props) by simply passing a different `--sport` flag to the edge discovery agent.
+Build enough of a track record (statistically significant win rate across 50+ trades) to validate the edge is real, then deploy real capital with proper Kelly sizing. The infrastructure is built to scale to new markets (NFL is already defined in `desks/nfl.yaml` but `PENDING` until Kalshi opens markets; adding a new sport is a new desk YAML file, not a code change) via `--desk <ID>` / `--all-desks`.
