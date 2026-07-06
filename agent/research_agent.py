@@ -542,7 +542,12 @@ def run(desk: DeskConfig, game_dict: dict, edge_context: dict | None = None) -> 
     )
 
     # Step 3: Call Claude with web_search + cached system prompt
-    client   = _anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    # Explicit timeout — without it, a stalled web-search tool call or network
+    # hiccup blocks forever instead of raising (caught below as an API error,
+    # falling back to MONITOR). Found via a real 12+ min hang in production
+    # once the 2026-07-06 all-dates expansion started surfacing far more
+    # candidates per cycle.
+    client   = _anthropic.Anthropic(api_key=ANTHROPIC_KEY, timeout=120.0)
     messages = [{"role": "user", "content": user_msg}]
 
     # Accumulators for cost tracking across all turns
