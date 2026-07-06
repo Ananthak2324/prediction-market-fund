@@ -10,8 +10,13 @@ ticker, odds-api sport key, gap thresholds, book list, alias map, cooldowns)
 comes from desks/<desk_id>.yaml via core.desk_loader.DeskConfig.
 
 Two modes:
-  --upcoming   scan all open Kalshi markets for today's games (scheduled/default)
-  --date YYYY-MM-DD   scan games on a specific date
+  --upcoming   scan every open Kalshi market regardless of date (scheduled/default) —
+               Kalshi opens markets 1-3 days before game time, and the biggest
+               behavioral mispricings tend to appear when retail first encounters
+               a new market, so early-window games are evaluated too, not just
+               today's (see 2026-07-06 fix: this used to silently skip everything
+               but today, undercovering ~85% of open markets at any given time).
+  --date YYYY-MM-DD   scan games on one specific date only
 
 Usage:
     python agent/edge_discovery_agent.py --desk MLB --upcoming
@@ -551,7 +556,6 @@ def compute_gap_matrix(
     sport_key  = desk.sport_key
     alias_map  = desk.alias_map
     now        = datetime.now(timezone.utc)
-    et_today   = now.astimezone(ET).date()
 
     raw_markets = fetch_kalshi_markets(series)
     book_index  = fetch_all_books(sport_key, desk.books)
@@ -580,14 +584,12 @@ def compute_gap_matrix(
 
         game_date_et = start_utc.astimezone(ET).date()
 
-        # Date filtering
-        if filter_date is not None:
-            if game_date_et != filter_date:
-                continue
-        else:
-            # --upcoming: only today's games in ET
-            if game_date_et != et_today:
-                continue
+        # Date filtering — only restrict when an explicit --date is given.
+        # --upcoming (filter_date is None) evaluates every open market
+        # regardless of date, since Kalshi opens markets 1-3 days ahead and
+        # the biggest behavioral mispricings appear in that early window.
+        if filter_date is not None and game_date_et != filter_date:
+            continue
 
         hours_until = (start_utc - now).total_seconds() / 3600
 
