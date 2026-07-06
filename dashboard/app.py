@@ -545,8 +545,14 @@ def render_desk_tab(desk, all_rows: list[dict], latest_snap_label: str) -> None:
         if game_dt is not None and game_dt.astimezone(ET).date() == today_et_date:
             snapped_tickers.add(row.get("event_ticker", ""))
 
-        if abs_gap >= desk.gap_min and tier in ("B", "C"):
+        # Tier A/B are actively traded (paper_trades.json); Tier C is shadow-only
+        # (apply_signal_gates() routes it to shadow_trades.json, never a real
+        # trade) — this must stay in sync with agent/edge_discovery_agent.py's
+        # signal-gate tiers, not the pre-rebuild Tier 1/2 thresholds.
+        if abs_gap >= desk.gap_min and tier in ("A", "B"):
             action = "TRADE ✓"
+        elif tier == "C":
+            action = "SHADOW"
         elif abs_gap >= 0.03:
             action = "WATCH"
         else:
@@ -614,11 +620,11 @@ def render_desk_tab(desk, all_rows: list[dict], latest_snap_label: str) -> None:
         st.dataframe(df_snap, use_container_width=True, hide_index=True)
 
         n_games  = len(records)
-        bc_ct    = sum(1 for r in records if r["Tier"] in ("B", "C"))
-        gap3_ct  = sum(1 for r in records if r["Action"] in ("TRADE ✓", "WATCH"))
+        ab_ct    = sum(1 for r in records if r["Tier"] in ("A", "B"))
+        gap3_ct  = sum(1 for r in records if r["Action"] in ("TRADE ✓", "WATCH", "SHADOW"))
         st.markdown(
             f"<div style='font-size:11px;color:#6B7280;margin-top:6px'>"
-            f"{n_games} sides tracked &nbsp;·&nbsp; {bc_ct} Tier B/C signals &nbsp;·&nbsp; "
+            f"{n_games} sides tracked &nbsp;·&nbsp; {ab_ct} Tier A/B (actively traded) signals &nbsp;·&nbsp; "
             f"{gap3_ct} show |gap| ≥ 3% &nbsp;·&nbsp; "
             f"Latest snap: <span style='color:#9CA3AF;font-family:monospace'>{fmt_snap_time(latest_snap_label)}</span>"
             f"</div>",
@@ -742,7 +748,15 @@ with tab_curves:
                 )
 
                 def _gc_action(g: float) -> str:
-                    return "TRADE ✓" if g >= 0.05 else ("WATCH" if g >= 0.03 else "—")
+                    # Tier A/B (5-15%) are actively traded; Tier C (15%+) is
+                    # shadow-only (apply_signal_gates() never opens a real
+                    # trade for it) — keep in sync with render_desk_tab()'s
+                    # Action column and agent/edge_discovery_agent.py's tiers.
+                    if g >= 0.15:
+                        return "SHADOW"
+                    if g >= 0.05:
+                        return "TRADE ✓"
+                    return "WATCH" if g >= 0.03 else "—"
 
                 _snap_rows = []
                 for _, _r in _latest.iterrows():
