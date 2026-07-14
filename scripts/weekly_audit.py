@@ -27,12 +27,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.notifications import send_imessage
-from agent.research_agent import MODEL, ANTHROPIC_KEY, THRESHOLDS, THRESHOLDS_FILE
+from core.desk_loader import get_active_desks
+from agent.research_agent import MODEL, ANTHROPIC_KEY
 
-DATA_DIR      = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-TRADES_FILE   = os.path.join(DATA_DIR, "paper_trades.json")
-SKIPPED_FILE  = os.path.join(DATA_DIR, "skipped_trades.json")
-COST_LOG      = os.path.join(DATA_DIR, "agent_cost_log.csv")
+# THRESHOLDS/THRESHOLDS_FILE (agent/thresholds.json) were removed in the
+# 2026-07-04 desk-config rebuild — thresholds now live per-desk in
+# desks/<id>.yaml. This script pre-dates that rebuild and was never migrated
+# (same class of bug as the other legacy scripts fixed during the rebuild) —
+# fixed 2026-07-13 to read desk-namespaced data and desk.get("thresholds").
+
+BASE          = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR      = os.path.join(BASE, "data")
 AUDITS_DIR    = os.path.join(DATA_DIR, "audits")
 
 WINDOW_DAYS         = 7
@@ -98,11 +103,11 @@ def aggregate_skipped(skipped: list[dict], cutoff: datetime) -> dict:
     }
 
 
-def aggregate_cost(cutoff: datetime) -> float:
-    if not os.path.exists(COST_LOG):
+def aggregate_cost(cost_log_path: str, cutoff: datetime) -> float:
+    if not os.path.exists(cost_log_path):
         return 0.0
     total = 0.0
-    with open(COST_LOG) as f:
+    with open(cost_log_path) as f:
         for row in csv.DictReader(f):
             try:
                 ts = datetime.strptime(row["timestamp"], "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc)
@@ -131,7 +136,7 @@ Shadow trades (agent said SKIP, outcome tracked but not traded):
 
 Weekly research-agent API cost: ${cost:.2f}
 
-CURRENT THRESHOLDS (agent/thresholds.json — these gate the TRADE/SKIP decision):
+CURRENT THRESHOLDS (desks/base.yaml's thresholds block — these gate the TRADE/SKIP decision):
 {thresholds_json}
 
 TASK:
@@ -172,7 +177,7 @@ def _parse_json_response(text: str) -> dict | None:
         return None
 
 
-def run_audit_llm(taken: dict, skipped: dict, cost: float) -> dict:
+def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict) -> dict:
     if not ANTHROPIC_KEY:
         return {
             "assessment":       "LLM audit skipped — ANTHROPIC_API_KEY not set.",
@@ -195,7 +200,7 @@ def run_audit_llm(taken: dict, skipped: dict, cost: float) -> dict:
         taken_json=json.dumps(taken, indent=2),
         skipped_json=json.dumps(skipped, indent=2),
         cost=cost,
-        thresholds_json=json.dumps(THRESHOLDS, indent=2),
+        thresholds_json=json.dumps(thresholds, indent=2),
         min_sample=MIN_SAMPLE_FOR_TUNE,
     )
 
@@ -260,18 +265,33 @@ def main() -> None:
     now    = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=WINDOW_DAYS)
 
-    trades  = json.load(open(TRADES_FILE)) if os.path.exists(TRADES_FILE) else []
-    skipped = json.load(open(SKIPPED_FILE)) if os.path.exists(SKIPPED_FILE) else []
+    desks = get_active_desks()
+
+    trades: list[dict]  = []
+    skipped: list[dict] = []
+    cost = 0.0
+    for desk in desks:
+        tp = os.path.join(BASE, desk.paper_trades_path)
+        if os.path.exists(tp):
+            trades.extend(json.load(open(tp)))
+        sp = os.path.join(BASE, desk.skipped_trades_path)
+        if os.path.exists(sp):
+            skipped.extend(json.load(open(sp)))
+        cost += aggregate_cost(os.path.join(BASE, desk.agent_cost_log_path), cutoff)
+    cost = round(cost, 4)
+
+    # Thresholds live in desks/base.yaml, shared identically across all active
+    # desks today — use the first desk's view as representative.
+    thresholds = desks[0].get("thresholds", {}) if desks else {}
 
     taken_stats   = aggregate_taken(trades, cutoff)
     skipped_stats = aggregate_skipped(skipped, cutoff)
-    cost          = aggregate_cost(cutoff)
 
     print(f"Taken:   {taken_stats}")
     print(f"Skipped: {skipped_stats}")
     print(f"Weekly agent cost: ${cost:.2f}")
 
-    audit = run_audit_llm(taken_stats, skipped_stats, cost)
+    audit = run_audit_llm(taken_stats, skipped_stats, cost, thresholds)
     print(f"\nAssessment: {audit.get('assessment')}")
     print(f"Sample size note: {audit.get('sample_size_note')}")
     print(f"Proposals: {json.dumps(audit.get('proposals'), indent=2)}")
@@ -286,8 +306,8 @@ def main() -> None:
         "taken":            taken_stats,
         "skipped":          skipped_stats,
         "weekly_cost_usd":  cost,
-        "thresholds_at_audit_time": THRESHOLDS,
-        "thresholds_file":  THRESHOLDS_FILE,
+        "thresholds_at_audit_time": thresholds,
+        "thresholds_source": "desks/base.yaml",
         "assessment":       audit.get("assessment"),
         "sample_size_note": audit.get("sample_size_note"),
         "proposals":        audit.get("proposals", []),
