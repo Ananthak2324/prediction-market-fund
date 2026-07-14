@@ -145,13 +145,38 @@ def diagnose_root_cause(mlb_desk, wnba_desk, comparison: dict) -> dict:
         or last_run_age_hours > STALE_THRESHOLD_HOURS
     )
 
+    # A sustained zero — many runs, confirmed-fresh data, every single one
+    # scanning zero markets — is much stronger evidence for (d) than for
+    # (a): a genuine game-volume mismatch would still show *some* nonzero
+    # days (WNBA plays most days in-season), whereas a perfect zero streak
+    # across a large sample points at markets not existing at all.
+    SUSTAINED_ZERO_RUN_THRESHOLD = 20
+    sustained_zero = (
+        not data_looks_stale
+        and wnba_scanned == 0
+        and wnba_runs >= SUSTAINED_ZERO_RUN_THRESHOLD
+    )
+
+    if sustained_zero:
+        a_verdict = "UNLIKELY"
+        d_verdict = "STRONG"
+    elif data_looks_stale:
+        a_verdict = "INCONCLUSIVE"
+        d_verdict = "INCONCLUSIVE_UNTIL_C_RULED_OUT"
+    elif wnba_scanned > 0 and comparison["scanned_ratio_wnba_to_mlb"] not in (None, 0):
+        a_verdict = "PLAUSIBLE"
+        d_verdict = "DISPROVEN"
+    else:
+        a_verdict = "CANNOT_RULE_OUT"
+        d_verdict = "PLAUSIBLE"
+
     verdicts = {
         "a_game_volume_mismatch": {
-            "verdict": "INCONCLUSIVE" if data_looks_stale else (
-                "PLAUSIBLE" if wnba_scanned > 0 and comparison["scanned_ratio_wnba_to_mlb"] not in (None, 0) else "CANNOT_RULE_OUT"
-            ),
+            "verdict": a_verdict,
             "evidence": f"scanned_ratio_wnba_to_mlb={comparison['scanned_ratio_wnba_to_mlb']}, "
-                        f"wnba n_runs={wnba_runs} over the trailing {WINDOW_DAYS}d window",
+                        f"wnba n_runs={wnba_runs} over the trailing {WINDOW_DAYS}d window"
+                        + (f" — a hard zero across {wnba_runs} runs (>= {SUSTAINED_ZERO_RUN_THRESHOLD}) "
+                           f"on confirmed-fresh data argues against 'just fewer games'" if sustained_zero else ""),
         },
         "b_gate_strictness": {
             "verdict": "DISPROVEN" if thresholds_equal else "CONFIRMED",
@@ -165,11 +190,10 @@ def diagnose_root_cause(mlb_desk, wnba_desk, comparison: dict) -> dict:
                         f"the edge-discovery timer's actual 30-min cadence, that points here, NOT to (a)/(d)",
         },
         "d_no_kalshi_markets": {
-            "verdict": "INCONCLUSIVE_UNTIL_C_RULED_OUT" if data_looks_stale else (
-                "PLAUSIBLE" if wnba_scanned == 0 else "DISPROVEN"
-            ),
+            "verdict": d_verdict,
             "evidence": f"total_scanned={wnba_scanned} across {wnba_runs} run(s) — "
-                        f"this can only be trusted once (c) is ruled out",
+                        f"this can only be trusted once (c) is ruled out"
+                        + (f"; (c) is disproven this run, so this reading is trustworthy" if sustained_zero else ""),
         },
     }
     return verdicts
@@ -254,6 +278,18 @@ def format_report(comparison: dict, verdicts: dict, wnba_trade_counts: tuple[int
             "Gate thresholds differ between desks — this IS the smallest safe explanation to "
             "investigate, but any actual threshold change requires your explicit sign-off "
             "(affects live capital) and is NOT proposed automatically by this script."
+        )
+    elif verdicts["d_no_kalshi_markets"]["verdict"] == "STRONG":
+        lines.append(
+            "This is a **market-availability gap, not a system bug.** The pipeline is fully "
+            "healthy (fresh data, correct 30-min cadence, identical gate thresholds to MLB) — "
+            "but it has scanned exactly zero WNBA markets across every single run in the "
+            "trailing window. Recommended next step: manually confirm against Kalshi directly "
+            "whether `KXWNBAGAME` markets are currently open at all (e.g. check Kalshi's site/API "
+            "for the series), since a full zero streak this long is not explained by ordinary "
+            "game-volume variation. If Kalshi genuinely has no WNBA markets open right now, "
+            "**no code or config change closes this gap** — it's a wait for the WNBA season/market "
+            "window to open, not a fixable pipeline issue. No gate/threshold change proposed."
         )
     else:
         lines.append(

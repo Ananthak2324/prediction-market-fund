@@ -346,10 +346,13 @@ def main() -> None:
     print(report)
 
     out_dir = os.path.join(BASE, "outputs")
-    os.makedirs(out_dir, exist_ok=True)
     out_path = args.out_json or os.path.join(out_dir, f"clustered_validation_{date.today().isoformat()}.json")
-    with open(out_path, "w") as f:
-        json.dump({"mlb": mlb, "wnba": wnba}, f, indent=2, default=str)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(out_path, "w") as f:
+            json.dump({"mlb": mlb, "wnba": wnba}, f, indent=2, default=str)
+    except OSError as e:
+        print(f"\n[warning] could not write {out_path}: {e} — report above is still complete.", file=sys.stderr)
 
 
 if __name__ == "__main__":
