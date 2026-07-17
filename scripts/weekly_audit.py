@@ -29,6 +29,7 @@ load_dotenv()
 from core.notifications import send_imessage
 from core.desk_loader import get_active_desks
 from agent.research_agent import MODEL, ANTHROPIC_KEY
+from scripts.update_outcomes import build_summary
 
 # THRESHOLDS/THRESHOLDS_FILE (agent/thresholds.json) were removed in the
 # 2026-07-04 desk-config rebuild — thresholds now live per-desk in
@@ -103,6 +104,32 @@ def aggregate_skipped(skipped: list[dict], cutoff: datetime) -> dict:
     }
 
 
+def gather_tier_signal_performance(desks) -> dict:
+    """
+    Per-desk tier_performance/signal_performance from build_summary() — fed
+    to the audit LLM so its new tier_signal_verdicts (2026-07-16 addition)
+    are grounded in real current status/EV/sample-size numbers, not just the
+    taken/shadow aggregates the rest of this script already computes.
+
+    Calls build_summary() once per desk with that desk's own trades AND its
+    own shadow_trades.json passed explicitly (mirrors dashboard/app.py's
+    load_summary() pattern) rather than relying on build_summary()'s
+    SHADOW_FILE module-global default, which this script never sets.
+    """
+    out: dict = {}
+    for desk in desks:
+        tp = os.path.join(BASE, desk.paper_trades_path)
+        trades = json.load(open(tp)) if os.path.exists(tp) else []
+        sp = os.path.join(BASE, desk.shadow_trades_path)
+        shadow = json.load(open(sp)) if os.path.exists(sp) else []
+        summary = build_summary(trades, shadow_entries=shadow)
+        out[desk.desk_id] = {
+            "tier_performance":   summary.get("tier_performance", {}),
+            "signal_performance": summary.get("signal_performance", {}),
+        }
+    return out
+
+
 def aggregate_cost(cost_log_path: str, cutoff: datetime) -> float:
     if not os.path.exists(cost_log_path):
         return 0.0
@@ -139,6 +166,9 @@ Weekly research-agent API cost: ${cost:.2f}
 CURRENT THRESHOLDS (desks/base.yaml's thresholds block — these gate the TRADE/SKIP decision):
 {thresholds_json}
 
+CURRENT TIER/SIGNAL STATUS AND PERFORMANCE, PER DESK (from build_summary(), current as of this audit):
+{tier_signal_json}
+
 TASK:
 1. Assess whether SKIP decisions were net-correct this week by comparing the shadow win rate to the \
 taken win rate. A SKIP filter is working if shadow win rate is meaningfully lower than taken win rate.
@@ -149,6 +179,12 @@ week's numbers.
 above is below that line. With small samples, lean strongly toward proposing NO changes — explicitly say \
 in sample_size_note that the data is too thin to act on, rather than overfitting to noise. It is correct \
 and expected for proposals to be empty most weeks at this trade volume.
+4. For EVERY tier and signal shown in the per-desk status above, give an explicit verdict: reuse its \
+current status string (ACTIVE_FULL, ACTIVE_REDUCED, or SHADOW_ONLY) if you see no reason to change it, \
+or propose DOWNGRADE (move to reduced sizing or shadow-only) or KILL (stop shadow-tracking entirely, \
+no further value in continuing to watch it) if the evidence supports it. Apply the same sample-size \
+discipline as above — do not propose DOWNGRADE/KILL on a thin sample; use the existing status as the \
+verdict and say so in the reason.
 
 Return ONLY this JSON object, no markdown fences, no preamble:
 {{
@@ -156,6 +192,12 @@ Return ONLY this JSON object, no markdown fences, no preamble:
   "sample_size_note": "one sentence on whether this week's volume is sufficient to act on",
   "proposals": [
     {{"threshold": "tier_b_min_gap", "current_value": 0.10, "proposed_value": 0.08, "rationale": "..."}}
+  ],
+  "tier_signal_verdicts": [
+    {{"scope": "tier", "id": "C", "current_status": "SHADOW_ONLY", "verdict": "KILL",
+      "reason": "...", "sample_size": 0, "confidence": "low"}},
+    {{"scope": "signal", "id": "BUY_NO", "current_status": "SHADOW_ONLY", "verdict": "DOWNGRADE",
+      "reason": "...", "sample_size": 8, "confidence": "low"}}
   ]
 }}
 """
@@ -177,12 +219,13 @@ def _parse_json_response(text: str) -> dict | None:
         return None
 
 
-def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict) -> dict:
+def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict, tier_signal_performance: dict) -> dict:
     if not ANTHROPIC_KEY:
         return {
             "assessment":       "LLM audit skipped — ANTHROPIC_API_KEY not set.",
             "sample_size_note": "n/a",
             "proposals":        [],
+            "tier_signal_verdicts": [],
             "_error":           "no_api_key",
         }
     try:
@@ -192,6 +235,7 @@ def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict) -> 
             "assessment":       "LLM audit skipped — anthropic package not installed.",
             "sample_size_note": "n/a",
             "proposals":        [],
+            "tier_signal_verdicts": [],
             "_error":           "no_anthropic_package",
         }
 
@@ -201,6 +245,7 @@ def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict) -> 
         skipped_json=json.dumps(skipped, indent=2),
         cost=cost,
         thresholds_json=json.dumps(thresholds, indent=2),
+        tier_signal_json=json.dumps(tier_signal_performance, indent=2),
         min_sample=MIN_SAMPLE_FOR_TUNE,
     )
 
@@ -218,16 +263,19 @@ def run_audit_llm(taken: dict, skipped: dict, cost: float, thresholds: dict) -> 
                 "assessment":       "LLM audit failed — could not parse response as JSON.",
                 "sample_size_note": "n/a",
                 "proposals":        [],
+                "tier_signal_verdicts": [],
                 "_error":           "parse_failed",
                 "_raw_response":    raw_text,
             }
         parsed.setdefault("proposals", [])
+        parsed.setdefault("tier_signal_verdicts", [])
         return parsed
     except Exception as e:
         return {
             "assessment":       f"LLM audit failed — {e}",
             "sample_size_note": "n/a",
             "proposals":        [],
+            "tier_signal_verdicts": [],
             "_error":           "api_call_failed",
         }
 
@@ -283,6 +331,7 @@ def main() -> None:
     # Thresholds live in desks/base.yaml, shared identically across all active
     # desks today — use the first desk's view as representative.
     thresholds = desks[0].get("thresholds", {}) if desks else {}
+    tier_signal_performance = gather_tier_signal_performance(desks)
 
     taken_stats   = aggregate_taken(trades, cutoff)
     skipped_stats = aggregate_skipped(skipped, cutoff)
@@ -291,10 +340,11 @@ def main() -> None:
     print(f"Skipped: {skipped_stats}")
     print(f"Weekly agent cost: ${cost:.2f}")
 
-    audit = run_audit_llm(taken_stats, skipped_stats, cost, thresholds)
+    audit = run_audit_llm(taken_stats, skipped_stats, cost, thresholds, tier_signal_performance)
     print(f"\nAssessment: {audit.get('assessment')}")
     print(f"Sample size note: {audit.get('sample_size_note')}")
     print(f"Proposals: {json.dumps(audit.get('proposals'), indent=2)}")
+    print(f"Tier/signal verdicts: {json.dumps(audit.get('tier_signal_verdicts'), indent=2)}")
 
     period_start = cutoff.date().isoformat()
     period_end   = now.date().isoformat()
@@ -308,9 +358,11 @@ def main() -> None:
         "weekly_cost_usd":  cost,
         "thresholds_at_audit_time": thresholds,
         "thresholds_source": "desks/base.yaml",
+        "tier_signal_performance_at_audit_time": tier_signal_performance,
         "assessment":       audit.get("assessment"),
         "sample_size_note": audit.get("sample_size_note"),
         "proposals":        audit.get("proposals", []),
+        "tier_signal_verdicts": audit.get("tier_signal_verdicts", []),
     }
 
     message = format_digest(period_start, period_end, taken_stats, skipped_stats, audit)
