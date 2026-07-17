@@ -510,7 +510,15 @@ def fetch_all_books(sport_key: str, books: list[str]) -> dict[str, dict]:
                 "_away_odds": a_odds,
             }
         if book_data:
-            index[key] = {"home": home, "away": away, "books": book_data}
+            # start_time is the odds-api's own verified game start —
+            # needed as a fallback in compute_gap_matrix() for desks whose
+            # Kalshi ticker doesn't encode a time component (see
+            # ticker_to_utc()'s docstring; confirmed 2026-07-16 that WNBA
+            # tickers have no HHMM segment at all, unlike MLB's). Do NOT use
+            # Kalshi's own occurrence_datetime/expiration fields for this —
+            # cross-validated against this same field on a real game and
+            # found them ~3h off (closer to game settlement than tip-off).
+            index[key] = {"home": home, "away": away, "books": book_data, "start_time": g.get("start_time")}
     return index
 
 
@@ -578,7 +586,33 @@ def compute_gap_matrix(
         if len(sides) < 2:
             continue
 
+        # Team matching happens before start-time resolution (not after, as
+        # it used to) because the fallback below needs book_index[game_key]
+        # to find a start time when the ticker itself doesn't encode one.
+        k_names   = [s["yes_sub_title"] for s in sides]
+        game_key  = _match_game(k_names, book_index, alias_map)
+        if not game_key:
+            continue
+
+        home, away   = game_key
+        game_data    = book_index[game_key]
+        book_probs   = game_data["books"]
+
         start_utc = ticker_to_utc(et)
+        if not start_utc:
+            # Some desks' Kalshi tickers don't encode a time component at all
+            # (confirmed 2026-07-16: WNBA's ticker has no HHMM segment,
+            # unlike MLB's) — fall back to the odds-api's own verified
+            # start_time for this matched game. Do NOT fall back to Kalshi's
+            # occurrence_datetime/expiration fields here — cross-validated
+            # against this same odds-api field on a real game and found them
+            # ~3h off (closer to game settlement than tip-off).
+            raw_start = game_data.get("start_time")
+            if raw_start:
+                try:
+                    start_utc = datetime.fromisoformat(raw_start.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    start_utc = None
         if not start_utc:
             continue
 
@@ -592,15 +626,6 @@ def compute_gap_matrix(
             continue
 
         hours_until = (start_utc - now).total_seconds() / 3600
-
-        k_names   = [s["yes_sub_title"] for s in sides]
-        game_key  = _match_game(k_names, book_index, alias_map)
-        if not game_key:
-            continue
-
-        home, away   = game_key
-        game_data    = book_index[game_key]
-        book_probs   = game_data["books"]
 
         for s in sides:
             sub       = s["yes_sub_title"]
