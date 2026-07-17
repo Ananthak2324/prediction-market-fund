@@ -1,0 +1,10 @@
+[Unit]
+Description=Prediction Fund — audit feedback-loop drafting agent (triggered by prediction-fund-feedback-loop.timer)
+
+[Service]
+Type=oneshot
+User=predfund
+WorkingDirectory=/opt/prediction-fund
+ExecStart=/opt/prediction-fund/venv/bin/python3 agent/feedback_loop_agent.py
+StandardOutput=append:/opt/prediction-fund/data/snapshots/feedback_loop_out.log
+StandardError=append:/opt/prediction-fund/data/snapshots/feedback_loop_err.log

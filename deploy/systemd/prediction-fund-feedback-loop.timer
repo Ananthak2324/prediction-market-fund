@@ -1,0 +1,10 @@
+[Unit]
+Description=Run prediction-fund-feedback-loop every Sunday shortly after the weekly audit
+
+[Timer]
+OnCalendar=Sun *-*-* 23:30:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
