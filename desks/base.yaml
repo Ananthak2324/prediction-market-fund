@@ -42,8 +42,28 @@ schedule:
   edge_discovery_minutes: 30
   outcomes_check_minutes: 15
   gap_curve_poll_minutes: 5
+  # Flat fallback — used when hours-before-game can't be determined (e.g. a
+  # desk whose Kalshi ticker has no embedded time and no odds-api start_time
+  # fallback available at this point in the pipeline). Real cadence for
+  # desks with a known game time comes from cooldown_tiers below.
   cooldown_hours: 1
   monitor_cooldown_hours: 1
+  # Tiered cooldown (2026-07-17) — replaces the flat 1h cooldown, which was
+  # re-researching the same far-out candidate dozens of times before it
+  # ever played (confirmed: one MLB game got 44 separate research calls at
+  # ~$0.10/call). Games far from start time rarely have anything new to
+  # find; games close to start time are exactly when real news (late
+  # scratches, lineup changes) actually breaks, so responsiveness there is
+  # kept at the original 1h. Applies to both SKIP and MONITOR cooldowns.
+  # Checked in order; first tier whose min_hours_before_game the candidate
+  # still clears wins.
+  cooldown_tiers:
+    - min_hours_before_game: 24
+      cooldown_hours: 12
+    - min_hours_before_game: 6
+      cooldown_hours: 4
+    - min_hours_before_game: 0
+      cooldown_hours: 1
 risk:
   sandbox_start_date: "2026-07-05"
   starting_bankroll: 1000.00

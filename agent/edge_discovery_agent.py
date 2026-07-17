@@ -155,6 +155,34 @@ def _funnel_log_file(desk: DeskConfig) -> str:
     return os.path.join(BASE, desk.funnel_log_path)
 
 
+def _resolve_cooldown_hours(desk: DeskConfig, event_ticker: str, now: datetime, default_hours: float) -> float:
+    """
+    Tiered cooldown (2026-07-17): a game far from start time is re-checked
+    rarely (little chance anything's changed); a game close to start time
+    keeps the original fast cadence, since that's when real news (late
+    scratches, lineup changes) actually breaks. Replaces a flat cooldown
+    that was re-researching the same far-out candidate dozens of times
+    before it ever played.
+
+    Falls back to `default_hours` when hours-before-game can't be
+    determined — event tickers with no embedded time and no odds-api
+    start_time fallback available at this point in the pipeline (this
+    function runs before compute_gap_matrix() builds book_index, so only
+    ticker_to_utc()'s own parsing is available here).
+    """
+    tiers = desk.get("schedule.cooldown_tiers")
+    if not tiers:
+        return default_hours
+    start_utc = ticker_to_utc(event_ticker)
+    if not start_utc:
+        return default_hours
+    hours_before = (start_utc - now).total_seconds() / 3600
+    for tier in tiers:
+        if hours_before >= tier["min_hours_before_game"]:
+            return tier["cooldown_hours"]
+    return default_hours
+
+
 def _load_evaluated_tickers(desk: DeskConfig) -> tuple[set[str], set[str]]:
     """
     Returns (traded_tickers, cooldown_tickers).
@@ -190,7 +218,8 @@ def _load_evaluated_tickers(desk: DeskConfig) -> tuple[set[str], set[str]]:
                     skipped_at = t.get("skipped_at", "")
                     try:
                         age_h = (now - datetime.fromisoformat(skipped_at)).total_seconds() / 3600
-                        if age_h < skip_cooldown_hours:
+                        cooldown_h = _resolve_cooldown_hours(desk, et, now, skip_cooldown_hours)
+                        if age_h < cooldown_h:
                             cooldown.add(et)
                     except Exception:
                         cooldown.add(et)
@@ -204,7 +233,8 @@ def _load_evaluated_tickers(desk: DeskConfig) -> tuple[set[str], set[str]]:
                 for et, ts in json.load(f).items():
                     try:
                         age_h = (now - datetime.fromisoformat(ts)).total_seconds() / 3600
-                        if age_h < monitor_cooldown_hours:
+                        cooldown_h = _resolve_cooldown_hours(desk, et, now, monitor_cooldown_hours)
+                        if age_h < cooldown_h:
                             cooldown.add(et)
                     except Exception:
                         cooldown.add(et)
