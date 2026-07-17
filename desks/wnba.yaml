@@ -35,6 +35,7 @@ teams:
     "IND": Indiana Fever
     "DAL": Dallas Wings
     "WAS": Washington Mystics
+    "GS": Golden State Valkyries
 agent:
   prompt:
     market_description: WNBA basketball game
