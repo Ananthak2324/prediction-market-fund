@@ -12,6 +12,7 @@ Runs 24/7 on a Google Cloud VPS via systemd — not a local/laptop-dependent pip
 
 1. [What This Project Does](#1-what-this-project-does)
 2. [The 2026-07-04 Rebuild](#2-the-2026-07-04-rebuild)
+   - [2a. The 2026-07-06 to 2026-07-17 Hardening Pass](#2a-the-2026-07-06-to-2026-07-17-hardening-pass)
 3. [Project Goal & Current State](#3-project-goal--current-state)
 4. [Tech Stack](#4-tech-stack)
 5. [Environment Setup](#5-environment-setup)
@@ -28,6 +29,8 @@ Runs 24/7 on a Google Cloud VPS via systemd — not a local/laptop-dependent pip
 16. [Sandbox Portfolio Simulation](#16-sandbox-portfolio-simulation)
 17. [Running the Dashboard](#17-running-the-dashboard)
 18. [Current Performance](#18-current-performance)
+   - [18a. Clustering-Aware Validation & WNBA Parity Diagnosis](#18a-clustering-aware-validation--wnba-parity-diagnosis)
+   - [18b. Audit Feedback Loop](#18b-audit-feedback-loop)
 19. [Roadmap](#19-roadmap)
 20. [Known Issues & Edge Cases](#20-known-issues--edge-cases)
 21. [What Is and Isn't Committed](#21-what-is-and-isnt-committed)
@@ -75,25 +78,54 @@ Treat any trade dated before 2026-07-04 as pre-rebuild data — visible for audi
 
 ---
 
+## 2a. The 2026-07-06 to 2026-07-17 Hardening Pass
+
+A second round of fixes, this time focused on data integrity, statistical rigor, and cost — triggered by a mix of user bug reports and a systematic self-audit rather than one big incident.
+
+**Dashboard & data-consistency fixes (2026-07-06):**
+- **Performance tab mismatch** — `dashboard/app.py`'s `load_summary()` was merging pre-summarized per-desk JSON files and only re-summing a handful of top-level keys, leaving nested fields (tier/signal performance, gap buckets, agent stats) reflecting only one desk. Fixed to rebuild one summary from combined raw trades across all active desks via `build_summary(trades, shadow_entries=...)`.
+- **Intelligence Agent stale grounding** — `agent/memory_agent.py` was reading frozen pre-migration data files and an outdated `system_overview.md`. Fixed to aggregate live desk-namespaced data; `system_overview.md` rewritten to describe the current architecture.
+- **Dashboard auto-refresh killing long answers** — a 60-second `st_autorefresh` was silently cancelling in-flight script runs (e.g. a long Intelligence Agent response) before they could finish. Raised to 5 minutes.
+- **Gap scanner Action-column bug** — `render_desk_tab()`'s "TRADE ✓" label used `tier in ("B", "C")`, backward from the actual signal-gate tiers (Tier A/B trade for real, Tier C is shadow-only) — this excluded Tier A (the strongest tier) and mislabeled Tier C shadow candidates as real trades. Fixed; Tier C now shows a distinct "SHADOW" label.
+
+**Edge-discovery coverage & reliability fixes (2026-07-06):**
+- **All-dates expansion** — `edge_discovery_agent.py --upcoming` was silently restricted to *today's* games only (a leftover from before the desk rebuild), missing ~85% of open markets at any given time (Kalshi opens markets 1-3 days ahead). Now scans every open market regardless of date.
+- **Anthropic client timeout/retries** — the expanded scan surfaced real production hangs (a stalled research call blocking the whole cycle indefinitely). Added `timeout=90.0, max_retries=1` to the client — the SDK's default `max_retries=2` was compounding a 120s-only timeout fix into ~6 minutes per stalled call.
+
+**Statistical validation & WNBA parity (2026-07-16 to 2026-07-17)** — see §18a (Clustering-Aware Validation & WNBA Parity Diagnosis) for full detail:
+- **`scripts/clustered_validation.py`** (new) — corrects for same-night trade clustering, which was inflating significance (naive per-trade binomial test treats correlated same-slate trades as independent).
+- **WNBA's entire trade shortfall traced to one bug**, not "small sample" or "no markets": `core/utils.py::ticker_to_utc()` requires an embedded HH:MM time component in the Kalshi ticker (MLB's format), but WNBA's ticker omits it entirely — so `compute_gap_matrix()` silently dropped every single WNBA candidate before team-matching ever ran, for the entire time the WNBA desk has existed. Fixed with a verified fallback to the odds-api's own `start_time` field (cross-validated against Kalshi's own `occurrence_datetime`, which was found to be off by exactly +3 hours — closer to game settlement than tip-off, so explicitly *not* used). Confirmed live: WNBA went from 0/200 scanned cycles to 14 real candidates on the next production run. Also added 3 missing 2026 WNBA expansion-team aliases (Golden State Valkyries, Toronto Tempo, Portland Fire) found during the investigation.
+- **`scripts/wnba_parity_diagnosis.py`** (new) — categorizes the root cause of any MLB/WNBA volume gap into game-volume / gate-strictness / pipeline-sync-bug / market-availability, with real evidence per category rather than an assumption.
+
+**Audit feedback loop (2026-07-16):** `scripts/weekly_audit.py`'s report was write-only — generated every Sunday, saved to disk, never read back by anything (confirmed via grep). Closed the loop: the audit's LLM now outputs a `tier_signal_verdicts` field (KILL/DOWNGRADE per tier/signal, reusing the existing status vocabulary), a new `agent/feedback_loop_agent.py` drafts a human-readable note per verdict into a `PENDING_REVIEW` queue, and `scripts/feedback_queue_cli.py` handles manual approve/reject. Explicitly not autonomous — no code path here ever edits desk config or applies a change without a human reviewing it first. See §18b (Audit Feedback Loop).
+
+**Cost optimization — tiered cooldown (2026-07-17):** cost analysis of `agent_cost_log.csv` found $21.17 spent over 217 research-agent calls, with the top 10 most-researched games accounting for 156 of those calls (72%) — one game was independently re-researched 44 times before it ever played, at ~$0.10/call, because the flat 1-hour cooldown (reduced from 3h during the July 4 rebuild to fix the now-resolved dual-pipeline starvation bug) combined with the all-dates expansion meant a game visible days out got re-checked every single cycle. Replaced with a 3-tier cooldown based on hours-before-game (12h if >24h out, 4h if 6-24h out, 1h if <6h out — full responsiveness preserved exactly when real news like late scratches actually breaks). Estimated 60-70% cost reduction with no loss of decision quality.
+
+---
+
 ## 3. Project Goal & Current State
 
-**Target:** 30+ clean resolved Tier A trades with win rate ≥ 58% and p < 0.05, then deploy real capital with proper Kelly sizing.
+**Target:** 30+ clean resolved Tier A trades with win rate ≥ 58% and p < 0.05 (clustering-corrected, see §18a), then deploy real capital with proper Kelly sizing.
 
-**Current state (post-rebuild, as of 2026-07-05):**
+**Current state (as of 2026-07-17 — run `python scripts/full_system_stats.py` for a live snapshot):**
 
 | Metric | Value |
 |---|---|
-| Trades logged (MLB + WNBA) | 38 |
-| Resolved | 21 |
+| Trades logged (MLB + WNBA) | 43 |
+| Resolved | 27 |
 | Paused (pre-rebuild contamination, excluded from stats) | 12 |
-| Tier A (5-10% gap) win rate | 81.8% (11 resolved) |
-| Tier B (10-15% gap) win rate | 37.5% (8 resolved, still in 20-trade validation window) |
-| Tier C (15%+ gap) | Shadow-only, 0 resolved so far |
-| Sandbox bankroll | $1,000.00 (clean start 2026-07-05) |
+| Valid for analysis | 23 |
+| Overall win rate | 56.5% (naive p=0.339, clustering-corrected p=0.337 — not yet significant, honestly) |
+| Tier A (5-10% gap) win rate | 64.7% (17 resolved, p=0.166) |
+| Tier B (10-15% gap) win rate | 37.5% (8/20 resolved toward the validation threshold) |
+| Tier C (15%+ gap) | Shadow-only, 4 shadow-resolved, 0% shadow win rate |
+| WNBA | Just fixed (see §2a) — 14 real candidates/cycle now, 0 resolved trades yet (too early to cite a win rate) |
+| Sandbox bankroll | $1,008.16 (+0.8%, 2 closed / 3 open positions) |
+| Agent API cost | $21.17 logged to date — tiered cooldown (§2a) expected to cut ongoing spend ~60-70% |
 
 **Key deadlines:**
 - **July 21, 2026** — TheOddsAPI business plan expires (renew or find alternative)
-- **July 27, 2026** — YC application deadline (`scripts/yc_summary.py` generates the clean baseline dataset for this)
+- **July 27, 2026** — YC application deadline (`scripts/yc_summary.py` for the raw stats snapshot; `outputs/yc_roadmap_traction_*.md` for the drafted narrative — see §18a/§18b)
 
 ---
 
@@ -247,6 +279,7 @@ prediction-market-fund/
 │   ├── research_agent.py               ← WRITTEN — AI trade filter, desk-parameterized
 │   ├── pre_filter.py                   ← WRITTEN — cheap pre-agent gap/prob sanity checks
 │   ├── memory_agent.py                 ← WRITTEN — Intelligence Agent (dashboard chatbot)
+│   ├── feedback_loop_agent.py          ← WRITTEN — drafts human-review notes for audit KILL/DOWNGRADE verdicts (§18b)
 │   ├── decision_engine.py              ← STUB    — Phase 3
 │   └── signal_framework.py             ← STUB    — Phase 3
 │
@@ -312,10 +345,14 @@ prediction-market-fund/
 │   ├── fix_monitor_bug_retroactive.py  ← WRITTEN — one-time MONITOR-bug retroactive fix
 │   ├── verify_phase1.py / verify_phase2.py / verify_all_phases.py ← WRITTEN — rebuild verification suites
 │   ├── yc_summary.py                   ← WRITTEN — clean baseline dataset for external use
+│   ├── full_system_stats.py            ← WRITTEN — comprehensive stats dump across all metrics
+│   ├── clustered_validation.py         ← WRITTEN — clustering-aware win-rate/p-value validation (§18a)
+│   ├── wnba_parity_diagnosis.py        ← WRITTEN — root-cause diagnosis for cross-desk trade-volume gaps (§18a)
+│   ├── feedback_queue_cli.py           ← WRITTEN — approve/reject CLI for audit feedback notes (§18b)
 │   ├── reprocess_skipped_trades.py     ← WRITTEN — retroactive SKIP-decision analysis
 │   ├── gap_curve_tracker.py            ← WRITTEN — always-on 5-min gap-curve daemon
 │   ├── gap_curve_analysis.py           ← WRITTEN — gap-curve summary stats
-│   ├── weekly_audit.py                 ← WRITTEN — Sunday statistical audit
+│   ├── weekly_audit.py                 ← WRITTEN — Sunday statistical audit + tier/signal KILL/DOWNGRADE verdicts (§18b)
 │   ├── send_digest.py                  ← WRITTEN — daily iMessage summary
 │   ├── relay_notifications.py          ← WRITTEN — Mac-side iMessage relay (VPS can't send iMessages)
 │   ├── sync_from_vps.sh                ← WRITTEN — pulls latest data from VPS to local
@@ -738,6 +775,18 @@ Columns: `timestamp`, `game`, `input_tokens`, `output_tokens`, `cache_read_token
 
 Auto-created when the agent returns `SKIP`. Full trade dict + agent verdict, per desk.
 
+### `data/audits/weekly_audit_<period_end>.json`
+
+One per Sunday audit run (`scripts/weekly_audit.py`). Key fields: `taken`/`skipped` (7-day aggregates), `thresholds_at_audit_time`, `tier_signal_performance_at_audit_time` (real `tier_performance`/`signal_performance` per desk, fed to the LLM), `assessment`, `proposals` (0-2 threshold-tuning suggestions), `tier_signal_verdicts` (new 2026-07-16 — one entry per tier/signal: `{scope, id, current_status, verdict, reason, sample_size, confidence}`, `verdict` ∈ `ACTIVE_FULL | ACTIVE_REDUCED | SHADOW_ONLY | DOWNGRADE | KILL`).
+
+### `data/audits/feedback_queue.json`
+
+Flat JSON list, written by `agent/feedback_loop_agent.py`, one entry per KILL/DOWNGRADE verdict from the latest audit. `status` ∈ `PENDING_REVIEW | APPROVED | REJECTED` — flipped only by `scripts/feedback_queue_cli.py approve/reject`, never by any automated process. Idempotent on `(scope, target_id, source_audit_date)`.
+
+### `outputs/clustered_validation_<date>.json`
+
+Written by `scripts/clustered_validation.py`. Per desk: `n_resolved`, `n_nights`, `naive` (win_rate, p_value), `clustered` (night-block-permutation p_value, `ci_95`), `flagged_clusters` (nights with 3+ trades).
+
 ---
 
 ## 13. Automation — systemd (VPS)
@@ -761,7 +810,8 @@ Runs 24/7 on a Google Cloud VPS (`34.134.239.151`, us-central1-b) — not depend
 | `prediction-fund-positions.service` | Always-on | Position manager, exit signals, circuit breaker |
 | `prediction-fund-dashboard.service` | Always-on | Streamlit dashboard (port 8501) |
 | `prediction-fund-digest.timer` | 2 AM UTC daily | iMessage daily summary |
-| `prediction-fund-weekly-audit.timer` | Sunday 11 PM UTC | Statistical audit |
+| `prediction-fund-weekly-audit.timer` | Sunday 11 PM UTC | Statistical audit + tier/signal KILL/DOWNGRADE verdicts |
+| `prediction-fund-feedback-loop.timer` | Sunday 11:30 PM UTC | Drafts human-review notes for the audit's KILL/DOWNGRADE verdicts (§18b) |
 
 Common commands:
 ```bash
@@ -888,19 +938,23 @@ All times displayed in **Central Time (CT)**. To change timezone, update `ET = Z
 
 ## 18. Current Performance
 
-*Post-rebuild, as of 2026-07-05 — run `python scripts/yc_summary.py` for a live snapshot.*
+*As of 2026-07-17 — run `python scripts/full_system_stats.py` or `python scripts/yc_summary.py` for a live snapshot.*
 
 ```
-38 trades logged (MLB + WNBA)
-21 resolved, 12 paused (pre-rebuild contamination, excluded)
+43 trades logged (MLB + WNBA)
+27 resolved, 12 paused (pre-rebuild contamination, excluded)
+23 valid for analysis
 
-Tier A (5-10% gap, 0.25x Kelly):  11 resolved, 81.8% win rate
-Tier B (10-15% gap, 0.10x Kelly):  8 resolved, 37.5% win rate — in 20-trade validation window
-Tier C (15%+ gap, shadow-only):    0 resolved so far
-BUY_NO (shadow-only):              0 resolved so far
+Tier A (5-10% gap, 0.25x Kelly):  17 resolved, 64.7% win rate (p=0.166)
+Tier B (10-15% gap, 0.10x Kelly):  8 resolved, 37.5% win rate — 8/20 toward validation window
+Tier C (15%+ gap, shadow-only):    4 shadow-resolved, 0.0% shadow win rate
+BUY_NO (shadow-only):              4 shadow-resolved, 50.0% shadow win rate
 
-Overall p-value: 0.166 — approaching significance, not yet conclusive
-Sandbox bankroll: $1,000.00 (clean start), 0 open positions, circuit breaker inactive
+Overall win rate: 56.5% — naive p=0.339, clustering-corrected p=0.337 (see §18a — not yet significant, honestly)
+Sandbox bankroll: $1,008.16 (+0.8%), 3 open / 2 closed positions, circuit breaker inactive
+
+WNBA: pipeline bug fixed 2026-07-17 (see §18a) — now scanning 14 real candidates/cycle,
+0 resolved trades yet (too early to cite a win rate)
 ```
 
 **Win rate needed for significance (clean Tier A trades only):**
@@ -912,6 +966,50 @@ Sandbox bankroll: $1,000.00 (clean start), 0 open positions, circuit breaker ina
 
 ---
 
+## 18a. Clustering-Aware Validation & WNBA Parity Diagnosis
+
+### `scripts/clustered_validation.py`
+
+Standalone, read-only script — does not touch `execution/position_manager.py`, live signal gates, Kelly sizing, or `desks/*.yaml`. Corrects a real statistical flaw: `build_summary()`'s p-value (`scipy.stats.binomtest`) treats every resolved trade as an independent Bernoulli trial, but trades on the same calendar night share a slate, correlated market conditions, and correlated model errors — not independent draws. One night alone (2026-06-24) accounted for 6 of 23 MLB resolved trades.
+
+Groups resolved trades by calendar night (ET date, same derivation `execution/position_manager.py` uses for `entry_date`) and runs a **night-level block permutation test** instead of the naive per-trade binomial test, plus a matching night-level bootstrap 95% CI. Chosen over a cluster-robust standard-error (sandwich variance) adjustment because it needs no asymptotic-normality assumption and is far simpler to verify correct at this sample size (a few dozen trades across a handful of nights) — rerun with a different `--seed` and confirm the p-value is stable. Flags every same-night cluster of 3+ trades. MLB and WNBA are validated independently (desk files already separate them). Does not touch Sharpe/portfolio metrics — those stay flagged as uncitable below 30 resolved trades per existing project convention.
+
+```bash
+python scripts/clustered_validation.py > reports/clustered_validation_$(date +%F).md
+```
+
+Latest MLB result: naive p=0.339 → clustered p=0.337 (barely moved — confirms the original number wasn't hiding a false positive, but that wasn't knowable until it was tested properly).
+
+### `scripts/wnba_parity_diagnosis.py`
+
+Diagnoses (doesn't auto-fix) why one desk lags another in resolved-trade volume, categorizing into: **(a)** game-volume mismatch, **(b)** gate/threshold strictness, **(c)** pipeline/sync bug, **(d)** market availability — with real evidence per category (funnel-log sums, a programmatic threshold-equality check between desks, data-freshness checks) rather than an assumption. Explicitly refuses to conclude (a)/(d) when the underlying funnel data looks stale (last run older than 3h vs. the 30-min edge-discovery cadence) — this caught a real near-miss where stale local data would have falsely concluded "Kalshi has no WNBA markets."
+
+**What it actually found (2026-07-17):** not (a), (b), (c), or (d) as originally scoped — a fifth category the diagnosis script itself couldn't detect. Live tracing of `compute_gap_matrix()` found `core/utils.py::ticker_to_utc()` returns `None` for every WNBA ticker (its regex requires an embedded `HHMM` time component that WNBA's ticker format doesn't have, unlike MLB's), silently dropping every WNBA candidate before team-matching ever ran — for the entire time the WNBA desk has existed. Fixed via a verified fallback to the odds-api's own `start_time` field in `fetch_all_books()`/`compute_gap_matrix()` (team-matching now happens *before* start-time resolution, so the fallback has a matched game to look up). Cross-validated against Kalshi's own `occurrence_datetime` on a real game first — found it off by exactly +3 hours (game settlement, not tip-off) — so that field is explicitly *not* used as the fallback. `ticker_to_utc()` itself (shared, MLB-dependent, explicitly sensitive infrastructure) is untouched; the fallback only triggers when it returns `None`.
+
+```bash
+python scripts/wnba_parity_diagnosis.py > reports/wnba_parity_$(date +%F).md
+```
+
+---
+
+## 18b. Audit Feedback Loop
+
+`scripts/weekly_audit.py`'s Sunday report was write-only from the day it was built — generated, saved to `data/audits/weekly_audit_*.json`, an iMessage sent, then never read back by anything (confirmed via grep before building this). Closed the loop, human-in-the-loop only — nothing here is autonomous:
+
+1. **`weekly_audit.py`'s schema extended** with a `tier_signal_verdicts` field — one verdict per tier/signal, reusing the existing `tier_performance` status vocabulary (`ACTIVE_FULL`/`ACTIVE_REDUCED`/`SHADOW_ONLY` for "no change") plus two new terms (`DOWNGRADE`/`KILL`). The LLM is fed real current `tier_performance`/`signal_performance` numbers per desk (via `build_summary()`), not just the taken/shadow aggregates it already had.
+2. **`agent/feedback_loop_agent.py`** (new) — modeled on `agent/memory_agent.py`'s client pattern (simple `messages.create()`, ephemeral system-prompt caching, no web search needed). Reads the latest audit report, drafts one human-readable note per KILL/DOWNGRADE verdict (what was flagged, why, 1-2 concrete next hypotheses to test), and appends it to `data/audits/feedback_queue.json` with `status: "PENDING_REVIEW"`. Idempotent — reruns against the same week's audit don't duplicate entries. Never edits `desks/*.yaml` or applies any change itself.
+3. **`scripts/feedback_queue_cli.py`** (new) — `list`/`show`/`approve`/`reject` subcommands. Only ever flips the queue entry's `status`/`reviewed_at`/`reviewed_by`/`review_note` fields — any actual desk-config change based on an approved entry is a fully separate manual step, by design.
+4. New systemd units (`prediction-fund-feedback-loop.service`/`.timer`) staggered 30 min after the existing Sunday 23:00 weekly-audit timer.
+
+```bash
+python scripts/weekly_audit.py                       # generates this week's report + verdicts
+python agent/feedback_loop_agent.py                  # drafts notes for any KILL/DOWNGRADE
+python scripts/feedback_queue_cli.py list
+python scripts/feedback_queue_cli.py approve <id> --by "you" --note "..."
+```
+
+---
+
 ## 19. Roadmap
 
 **Done since the original Phase 3 roadmap was written:**
@@ -919,23 +1017,31 @@ Sandbox bankroll: $1,000.00 (clean start), 0 open positions, circuit breaker ina
 - ✅ A/B/C tier signal-gate system with shadow tracking
 - ✅ Desk-config architecture replacing hardcoded per-sport constants
 - ✅ Concurrent-position cap + drawdown circuit breaker
+- ✅ Clustering-aware statistical validation (§18a) — replaces the naive per-trade binomial test
+- ✅ WNBA pipeline bug found and fixed — desk went from 0 to 14 real candidates/cycle (§18a)
+- ✅ Audit feedback loop (§18b) — KILL/DOWNGRADE verdicts now drafted into a human-review queue instead of being silently ignored
+- ✅ Tiered research-agent cooldown — ~60-70% expected cost reduction with no loss of decision quality
 
 **Remaining, in order of priority:**
 
-1. **Tier B validation** — reach 20 resolved trades to decide upgrade (>55% WR) vs. downgrade (<45% WR) to shadow-only
-2. **Tier C / BUY_NO investigation** — both were shadow'd pending investigation into pre-rebuild underperformance; needs enough shadow-resolved trades to re-evaluate
-3. **Live trading module** (`execution/live_trader.py`) — Kalshi order placement API, `LIVE_MODE` flag to switch from paper to real trades
-4. **`agent/decision_engine.py`** — convert verdict + gap → live order parameters
-5. **`core/db.py`** — SQLAlchemy ORM migration for paper_trades.json → SQL when trade volume grows
-6. **`dashboard/reporter.py`** — morning email/Slack digest (separate from the existing iMessage digest)
-7. **NFL activation** — `desks/nfl.yaml` already exists (`desk_status: PENDING`); flip to `ACTIVE` once Kalshi opens NFL markets for the season
+1. **Let WNBA accumulate resolved trades** — pipeline just got fixed 2026-07-17; needs real games to resolve before its win rate/tier performance can be cited anywhere
+2. **Tier B validation** — reach 20 resolved trades to decide upgrade (>55% WR) vs. downgrade (<45% WR) to shadow-only
+3. **Tier C / BUY_NO investigation** — both were shadow'd pending investigation into pre-rebuild underperformance; the audit feedback loop (§18b) now surfaces a real KILL/DOWNGRADE recommendation for these automatically each week instead of requiring a manual look
+4. **Live trading module** (`execution/live_trader.py`) — Kalshi order placement API, `LIVE_MODE` flag to switch from paper to real trades
+5. **`agent/decision_engine.py`** — convert verdict + gap → live order parameters
+6. **`core/db.py`** — SQLAlchemy ORM migration for paper_trades.json → SQL when trade volume grows
+7. **`dashboard/reporter.py`** — morning email/Slack digest (separate from the existing iMessage digest)
+8. **NFL activation** — `desks/nfl.yaml` already exists (`desk_status: PENDING`); flip to `ACTIVE` once Kalshi opens NFL markets for the season
 
 ---
 
 ## 20. Known Issues & Edge Cases
 
-**Kalshi `occurrence_datetime` is wrong by ~4 hours**
-Kalshi stores Eastern Time values in `occurrence_datetime` but labels them UTC. All timing logic uses `ticker_to_utc()` from `core/utils.py`, which parses the correct ET time directly from the ticker string. Never use `occurrence_datetime` for time calculations.
+**Kalshi `occurrence_datetime` is unreliable — confirmed twice, two different ways**
+Kalshi stores Eastern Time values in `occurrence_datetime` but labels them UTC for MLB (~4h error). Separately, for WNBA, `occurrence_datetime`/`expected_expiration_time` were cross-validated against the odds-api's independently-verified `start_time` on a real game and found off by exactly +3 hours — consistent with representing game settlement, not tip-off. Never use any Kalshi `occurrence_datetime`-family field for timing. All timing logic uses `ticker_to_utc()` from `core/utils.py` (MLB's ticker has an embedded time) or, when the ticker has no time component (confirmed for WNBA), a fallback to the odds-api's own `start_time` field wired through `compute_gap_matrix()`/`fetch_all_books()`.
+
+**Not every desk's Kalshi ticker encodes a game time**
+`ticker_to_utc()`'s regex requires an embedded `HHMM` segment (MLB's format: `KXMLBGAME-26JUN241210TEXMIA`). WNBA's ticker (`KXWNBAGAME-26JUL18WSHGS`) has no time component at all — this silently dropped every WNBA candidate for the entire time the desk existed (`compute_gap_matrix()`'s `if not start_utc: continue`), fixed 2026-07-17 via the odds-api `start_time` fallback above. If a future desk's ticker format also omits time, confirm the same fallback path actually triggers for it (team-matching must succeed first, since the fallback looks up `start_time` from the matched game in `book_index`).
 
 **Dashboard auto-refresh interval (fixed 2026-07-05)**
 Was 60 seconds; raised to 5 minutes. A short interval let Streamlit's periodic auto-rerun cancel a still-in-flight script run — e.g. a long Intelligence Agent answer near the 8192-token cap could take 90-150+ seconds to generate, and the 60s timer would kill it mid-request with no exception logged, producing a silently blank response.
@@ -956,7 +1062,10 @@ Snapshot filenames are UTC. A snapshot at 11 PM CT has a next-UTC-day filename. 
 `/markets` returns up to 200 results. No pagination implemented. Fine mid-season; may truncate near season start.
 
 **Team name matching**
-Kalshi ↔ TheOddsAPI matching uses each desk's `alias_map` (`desks/<sport>.yaml`), consolidated in the rebuild from three previously-diverged copies. Missing team → silent match failure → no Pinnacle data. Fix by adding the team to the relevant desk's `teams.alias_map`.
+Kalshi ↔ TheOddsAPI matching uses each desk's `alias_map` (`desks/<sport>.yaml`), consolidated in the rebuild from three previously-diverged copies. Missing team → silent match failure → no data for that team's games. Fix by adding the team to the relevant desk's `teams.alias_map`. Caught 3 times in one sitting (2026-07-17): `desks/wnba.yaml`'s alias map predated the 2026 WNBA expansion and was missing Golden State Valkyries, Toronto Tempo, and Portland Fire — check any desk's alias map against the current season's actual team list after a league expands or realigns.
+
+**Research-agent cost scales with re-research frequency, not just candidate volume**
+A flat cooldown re-checks every above-threshold candidate on the same schedule regardless of how far the game is from starting — a game visible 2-3 days out (common since the all-dates expansion, §2a) got re-researched every single 30-min cycle the whole time, even though nothing about it usually changes that fast. One MLB game was independently re-researched 44 times before it played (~$4.29 alone). Fixed via a 3-tier cooldown in `desks/base.yaml`'s `schedule.cooldown_tiers` (12h/4h/1h based on hours-before-game, full responsiveness preserved in the final 6h when real news actually breaks) — see `agent/edge_discovery_agent.py::_resolve_cooldown_hours()`. Before adding a new agent or expanding candidate coverage further, check whether it introduces the same "re-asking the same question repeatedly" pattern.
 
 **Sandbox has no per-desk table split**
 `sandbox_trades` has no `desk_id` column — all active desks currently share identical `risk.*` config values, so `execution/position_manager.py` reads risk parameters from a single shared desk (`_shared_risk_desk()`, currently MLB) rather than per-trade desk. Revisit if a desk ever needs different risk parameters.
