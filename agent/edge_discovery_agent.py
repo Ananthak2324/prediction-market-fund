@@ -499,8 +499,17 @@ def fetch_kalshi_markets(series: str) -> list[dict]:
 
 def fetch_all_books(sport_key: str, books: list[str]) -> dict[str, dict]:
     """
-    Returns {(home_team, away_team): {book: {home_team: vf_prob, away_team: vf_prob, vig}}}
+    Returns {(home_team, away_team, date_et): {book: {home_team: vf_prob, away_team: vf_prob, vig}}}
     fetched in a single API call for all three books.
+
+    Keyed by date as well as team names (2026-07-21 fix) — the same two
+    teams commonly play multiple games in the current window (any MLB
+    series), and keying by team names alone silently collapsed every later
+    game in a series onto the first one encountered, causing later games to
+    be matched against a different day's stale prices. `date_et` is derived
+    from the odds-api's own `start_time` (ET calendar date) — falls back to
+    `None` if `start_time` is missing/unparseable, which restores the old
+    team-names-only behavior for just that one entry rather than dropping it.
     """
     resp = requests.get(
         f"{ODDS_BASE}/odds/",
@@ -520,7 +529,14 @@ def fetch_all_books(sport_key: str, books: list[str]) -> dict[str, dict]:
     for g in games:
         home = g["home_team"]
         away = g["away_team"]
-        key  = (home, away)
+        date_et = None
+        raw_start = g.get("start_time")
+        if raw_start:
+            try:
+                date_et = datetime.fromisoformat(raw_start.replace("Z", "+00:00")).astimezone(ET).date()
+            except (ValueError, AttributeError):
+                date_et = None
+        key = (home, away, date_et)
         if key in index:
             continue
         book_data: dict[str, dict] = {}
@@ -562,8 +578,22 @@ def _get_vegas_teams(book_index: dict) -> list[str]:
     return list(teams)
 
 
-def _match_game(k_names: list[str], book_index: dict, alias_map: dict) -> tuple | None:
-    """Find the (home, away) key in book_index that matches both Kalshi sub-titles."""
+def _match_game(k_names: list[str], book_index: dict, alias_map: dict, target_date=None) -> tuple | None:
+    """
+    Find the (home, away, date) key in book_index that matches both Kalshi
+    sub-titles. When `target_date` is known (the Kalshi ticker's own game
+    date — always available for MLB), only considers entries for that exact
+    date, since the same two teams commonly play multiple games in the
+    current window (any MLB series) and matching on team names alone would
+    silently pick whichever game happened to be fetched first, regardless
+    of date (2026-07-21 fix — this was matching later-series games against
+    an earlier game's stale prices).
+
+    When `target_date` is None (a desk whose ticker has no embedded time,
+    e.g. WNBA — the date isn't known yet at match time), falls back to
+    team-names-only matching, same as before this fix; picks the earliest
+    date among ties as a best-effort tiebreak.
+    """
     vegas_teams = _get_vegas_teams(book_index)
     mapping: dict[str, str] = {}
     for ks in k_names:
@@ -572,12 +602,24 @@ def _match_game(k_names: list[str], book_index: dict, alias_map: dict) -> tuple 
             mapping[ks] = m
     if len(mapping) != 2 or len(set(mapping.values())) != 2:
         return None
-    # Find the matching game key
     matched_teams = set(mapping.values())
-    for (home, away) in book_index:
-        if {home, away} == matched_teams:
-            return (home, away)
-    return None
+
+    candidates = [
+        (home, away, d) for (home, away, d) in book_index
+        if {home, away} == matched_teams
+    ]
+    if not candidates:
+        return None
+    if target_date is not None:
+        exact = [c for c in candidates if c[2] == target_date]
+        if exact:
+            return exact[0]
+        return None  # this desk's game date is known but no odds entry matches it — don't guess
+    # No target date available (ticker has no embedded time) — best-effort:
+    # prefer the entry with the earliest known date, falling back to any
+    # entry with an unknown (None) date.
+    candidates.sort(key=lambda c: (c[2] is None, c[2]))
+    return candidates[0]
 
 
 # ── gap computation ───────────────────────────────────────────────────────────
@@ -616,19 +658,25 @@ def compute_gap_matrix(
         if len(sides) < 2:
             continue
 
-        # Team matching happens before start-time resolution (not after, as
-        # it used to) because the fallback below needs book_index[game_key]
-        # to find a start time when the ticker itself doesn't encode one.
-        k_names   = [s["yes_sub_title"] for s in sides]
-        game_key  = _match_game(k_names, book_index, alias_map)
+        # Resolve the ticker's own date first when available (MLB always has
+        # an embedded time) so team-matching can disambiguate which of
+        # potentially several games between the same two teams (any MLB
+        # series) this candidate actually is — matching on team names alone
+        # silently collapsed every later game in a series onto the first one
+        # fetched, regardless of date (2026-07-21 fix).
+        k_names        = [s["yes_sub_title"] for s in sides]
+        ticker_start   = ticker_to_utc(et)
+        target_date    = ticker_start.astimezone(ET).date() if ticker_start else None
+
+        game_key = _match_game(k_names, book_index, alias_map, target_date=target_date)
         if not game_key:
             continue
 
-        home, away   = game_key
+        home, away, _matched_date = game_key
         game_data    = book_index[game_key]
         book_probs   = game_data["books"]
 
-        start_utc = ticker_to_utc(et)
+        start_utc = ticker_start
         if not start_utc:
             # Some desks' Kalshi tickers don't encode a time component at all
             # (confirmed 2026-07-16: WNBA's ticker has no HHMM segment,
