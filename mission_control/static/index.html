@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EdgeFund — Mission Control</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="mc-header">
+    <div class="mc-logo">△ EdgeFund <span class="mc-sub">Mission Control</span></div>
+    <div class="mc-status">
+      <span class="mc-dot" id="conn-dot"></span>
+      <span id="conn-label">connecting…</span>
+    </div>
+  </header>
+
+  <main class="mc-stations">
+    <section class="station" data-agent="Scout">
+      <div class="station-head">
+        <span class="station-name">SCOUT</span>
+        <span class="station-desc">edge_discovery_agent.py — finds candidates, computes gaps</span>
+      </div>
+      <div class="station-pulse"></div>
+      <div class="station-feed" id="feed-Scout"></div>
+    </section>
+
+    <section class="station" data-agent="Analyst">
+      <div class="station-head">
+        <span class="station-name">ANALYST</span>
+        <span class="station-desc">research_agent.run() — the AI barrier, verdicts each candidate</span>
+      </div>
+      <div class="station-pulse"></div>
+      <div class="station-feed" id="feed-Analyst"></div>
+    </section>
+
+    <section class="station station-dim" data-agent="Auditor">
+      <div class="station-head">
+        <span class="station-name">AUDITOR</span>
+        <span class="station-desc">weekly_audit.py — Sunday statistical audit</span>
+      </div>
+      <div class="station-pulse"></div>
+      <div class="station-feed" id="feed-Auditor"></div>
+    </section>
+
+    <section class="station station-dim" data-agent="Ledger">
+      <div class="station-head">
+        <span class="station-name">LEDGER</span>
+        <span class="station-desc">feedback_loop_agent.py — drafts postmortem notes</span>
+      </div>
+      <div class="station-pulse"></div>
+      <div class="station-feed" id="feed-Ledger"></div>
+    </section>
+  </main>
+
+  <footer class="mc-footer">read-only observer — never writes to any trading file, gate, or process</footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
